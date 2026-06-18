@@ -34,6 +34,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_users_registered_at", "registered_at"),
         Index("ix_users_last_activity_at", "last_activity_at"),
         Index("ix_users_is_subscribed", "is_subscribed"),
+        Index("ix_users_phone", "phone"),
+        Index("ix_users_email", "email"),
     )
 
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
@@ -42,6 +44,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_name: Mapped[str | None] = mapped_column(String(128))
     language_code: Mapped[str | None] = mapped_column(String(16))
     country: Mapped[str | None] = mapped_column(String(128))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    email: Mapped[str | None] = mapped_column(String(320))
     birth_date: Mapped[date | None] = mapped_column(Date)
     age: Mapped[int | None] = mapped_column(Integer)
     age_group: Mapped[str | None] = mapped_column(String(32))

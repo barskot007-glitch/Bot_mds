@@ -33,6 +33,7 @@ from app.services.permissions import PermissionService
 from app.services.users import determine_age_group
 from app.states.admin import AdminManagementStates, AdminUserStates
 from app.utils.time import format_datetime, utcnow
+from app.utils.validators import validate_email, validate_phone
 
 router = Router(name="admin_management")
 
@@ -384,6 +385,8 @@ def user_card_text(user: object, settings: Settings) -> str:
     last_name = escape(user.last_name or "не указана")
     age_group = escape(user.age_group or "не указана")
     country = escape(user.country or "не указана")
+    phone = escape(user.phone or "не указан")
+    email = escape(user.email or "не указан")
     participation_history = escape(user.participation_history or "не указана")
     return (
         "<b>Карточка пользователя</b>\n\n"
@@ -394,6 +397,8 @@ def user_card_text(user: object, settings: Settings) -> str:
         f"Возраст: {user.age if user.age is not None else 'не указан'}\n"
         f"Возрастная группа: {age_group}\n"
         f"Страна: {country}\n"
+        f"Телефон: {phone}\n"
+        f"Email: {email}\n"
         f"История участия: {participation_history}\n"
         f"Регистрация: {format_datetime(user.registered_at, settings.default_timezone)}\n"
         f"Последняя активность: "
@@ -446,6 +451,8 @@ async def user_edit_start(
         "last": "фамилию",
         "age": "возраст числом",
         "country": "страну",
+        "phone": "номер телефона",
+        "email": "адрес электронной почты",
         "history": "историю участия",
     }
     if field not in labels:
@@ -493,6 +500,18 @@ async def user_edit_finish(
             await message.answer("Название страны должно содержать от 2 до 128 символов.")
             return
         user.country = value
+    elif field == "phone":
+        try:
+            user.phone = validate_phone(value)
+        except ValueError:
+            await message.answer("Укажите корректный номер телефона.")
+            return
+    elif field == "email":
+        try:
+            user.email = validate_email(value)
+        except ValueError:
+            await message.answer("Укажите корректный адрес электронной почты.")
+            return
     elif field == "history":
         if not 2 <= len(value) <= 2000:
             await message.answer("История должна содержать от 2 до 2000 символов.")

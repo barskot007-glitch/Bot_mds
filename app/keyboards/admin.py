@@ -8,22 +8,35 @@ from app.models.content_audit import FAQ, Admin, BotText
 from app.models.users_events import Event, Registration, User
 from app.texts.common import BROADCAST_STATUS_LABELS, EVENT_STATUS_LABELS, TICKET_STATUS_LABELS
 
+# Временно скрывает FAQ только из главного меню администратора.
+# Чтобы вернуть кнопку, измените значение на True.
+SHOW_FAQ_IN_ADMIN_MENU = False
+
 
 def admin_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Мероприятия", callback_data="adm:events"),
-                InlineKeyboardButton(text="Рассылки", callback_data="adm:broadcasts"),
-            ],
-            [
-                InlineKeyboardButton(text="База пользователей", callback_data="adm:users"),
-                InlineKeyboardButton(text="Обращения", callback_data="adm:support"),
-            ],
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="Мероприятия", callback_data="adm:events"),
+            InlineKeyboardButton(text="Рассылки", callback_data="adm:broadcasts"),
+        ],
+        [
+            InlineKeyboardButton(text="База пользователей", callback_data="adm:users"),
+            InlineKeyboardButton(text="Обращения", callback_data="adm:support"),
+        ],
+    ]
+
+    if SHOW_FAQ_IN_ADMIN_MENU:
+        rows.append(
             [
                 InlineKeyboardButton(text="FAQ", callback_data="adm:faq"),
                 InlineKeyboardButton(text="Статистика", callback_data="adm:stats"),
-            ],
+            ]
+        )
+    else:
+        rows.append([InlineKeyboardButton(text="Статистика", callback_data="adm:stats")])
+
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(text="Экспорт", callback_data="adm:export"),
                 InlineKeyboardButton(text="Журнал действий", callback_data="adm:logs"),
@@ -35,6 +48,7 @@ def admin_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Управление админами", callback_data="adm:admins")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cancel_keyboard() -> InlineKeyboardMarkup:
@@ -391,24 +405,10 @@ def support_ticket_actions(ticket: SupportTicket) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="Данные пользователя", callback_data=f"astu:{ticket.id}"),
                 InlineKeyboardButton(text="Ответить", callback_data=f"astr:{ticket.id}"),
-                InlineKeyboardButton(
-                    text="Назначить на себя", callback_data=f"astclaim:{ticket.id}"
-                ),
             ],
-            [
-                InlineKeyboardButton(
-                    text="В работе", callback_data=f"aststatus:{ticket.id}:in_progress"
-                ),
-                InlineKeyboardButton(
-                    text="Решено", callback_data=f"aststatus:{ticket.id}:resolved"
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="Закрыть", callback_data=f"aststatus:{ticket.id}:closed"),
-                InlineKeyboardButton(text="Открыть", callback_data=f"aststatus:{ticket.id}:new"),
-            ],
-            [InlineKeyboardButton(text="К обращениям", callback_data="adm:support")],
+            [InlineKeyboardButton(text="Назад", callback_data="adm:support")],
         ]
     )
 
@@ -548,6 +548,10 @@ def user_card_keyboard(user_id: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="Возраст", callback_data=f"auedit:{user_id}:age"),
                 InlineKeyboardButton(text="Страна", callback_data=f"auedit:{user_id}:country"),
+            ],
+            [
+                InlineKeyboardButton(text="Телефон", callback_data=f"auedit:{user_id}:phone"),
+                InlineKeyboardButton(text="Email", callback_data=f"auedit:{user_id}:email"),
             ],
             [
                 InlineKeyboardButton(

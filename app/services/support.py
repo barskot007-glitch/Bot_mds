@@ -53,14 +53,16 @@ class SupportService:
     ) -> SupportMessage:
         if ticket.status == TicketStatus.CLOSED:
             raise ValueError("Закрытое обращение нужно сначала открыть повторно")
-        ticket.assigned_admin_id = ticket.assigned_admin_id or admin.id
-        return await self.repository.add_message(
+        message = await self.repository.add_message(
             ticket=ticket,
             text=text.strip()[:4096],
             now=now,
             author_type=MessageAuthorType.ADMIN,
             admin_id=admin.id,
         )
+        ticket.status = TicketStatus.CLOSED
+        ticket.closed_at = now
+        return message
 
     async def notify_admins(
         self,
@@ -76,7 +78,9 @@ class SupportService:
             f"Обращение №{ticket.number}\n"
             f"Пользователь: {name}\n"
             f"Telegram ID: {user.telegram_id}\n"
-            f"Username: {username}\n\n"
+            f"Username: {username}\n"
+            f"Телефон: {user.phone or 'не указан'}\n"
+            f"Email: {user.email or 'не указан'}\n\n"
             "Ответить можно через /admin → Обращения."
         )
         recipients: set[int] = set(self.settings.superadmin_ids)

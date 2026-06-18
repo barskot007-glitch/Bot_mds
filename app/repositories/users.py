@@ -67,6 +67,8 @@ class UserRepository:
         first_name: str | None,
         last_name: str | None,
         country: str,
+        phone: str,
+        email: str,
         age: int,
         age_group: str,
         participation_history: str | None,
@@ -78,6 +80,8 @@ class UserRepository:
         if last_name:
             user.last_name = last_name
         user.country = country
+        user.phone = phone
+        user.email = email
         user.age = age
         user.age_group = age_group
         user.notifications_consent = notifications_consent

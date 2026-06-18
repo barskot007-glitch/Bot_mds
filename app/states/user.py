@@ -6,6 +6,8 @@ class RegistrationStates(StatesGroup):
     last_name = State()
     age = State()
     country = State()
+    phone = State()
+    email = State()
     participation_history = State()
     notifications_consent = State()
     data_consent = State()

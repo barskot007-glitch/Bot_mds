@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -10,14 +12,14 @@ from app.filters.admin import AdminFilter
 from app.keyboards.admin import cancel_keyboard, support_admin_keyboard, support_ticket_actions
 from app.models.broadcast_support import SupportAttachment
 from app.models.content_audit import Admin
-from app.models.enums import FileType, TicketStatus
+from app.models.enums import FileType
 from app.repositories.admins import AdminRepository
 from app.repositories.support import SupportRepository
 from app.services.permissions import PermissionService
 from app.services.support import SupportService
 from app.states.admin import AdminSupportStates
 from app.texts.common import TICKET_STATUS_LABELS
-from app.utils.time import utcnow
+from app.utils.time import format_datetime, utcnow
 
 router = Router(name="admin_support")
 router.message.filter(AdminFilter("support"))
@@ -34,12 +36,13 @@ async def support_list(callback: CallbackQuery, session: AsyncSession, admin_mod
     await require_support(admin_model)
     items = await SupportRepository(session).list_open(0, 50)
     await callback.message.answer(
-        "Обращения пользователей", reply_markup=support_admin_keyboard(items)
+        "Обращения пользователей" if items else "Новых обращений нет.",
+        reply_markup=support_admin_keyboard(items),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("ast:") & ~F.data.startswith("ast:status"))
+@router.callback_query(F.data.startswith("ast:") & ~F.data.startswith("astu:"))
 async def support_card(callback: CallbackQuery, session: AsyncSession, admin_model: Admin) -> None:
     await require_support(admin_model)
     ticket = await SupportRepository(session).get(callback.data.split(":", 1)[1])
@@ -47,12 +50,12 @@ async def support_card(callback: CallbackQuery, session: AsyncSession, admin_mod
         await callback.answer("Не найдено", show_alert=True)
         return
     messages = "\n\n".join(
-        f"<b>{'Пользователь' if msg.author_type.value == 'user' else 'Администратор'}:</b> {msg.text or '[вложение]'}"
+        f"<b>{'Пользователь' if msg.author_type.value == 'user' else 'Администратор'}:</b> "
+        f"{escape(msg.text or '[вложение]')}"
         for msg in ticket.messages[-15:]
     )
     await callback.message.answer(
         f"<b>Обращение №{ticket.number}</b>\n"
-        f"Тема: {ticket.subject}\n"
         f"Статус: {TICKET_STATUS_LABELS[ticket.status.value]}\n\n{messages}",
         reply_markup=support_ticket_actions(ticket),
     )
@@ -66,6 +69,38 @@ async def support_card(callback: CallbackQuery, session: AsyncSession, admin_mod
                 await callback.bot.send_document(
                     callback.from_user.id, attachment.file_id, caption=attachment.caption
                 )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("astu:"))
+async def support_user_data(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
+) -> None:
+    await require_support(admin_model)
+    ticket = await SupportRepository(session).get(callback.data.split(":", 1)[1])
+    if ticket is None:
+        await callback.answer("Обращение не найдено", show_alert=True)
+        return
+    user = ticket.user
+    username = f"@{user.username}" if user.username else "не указан"
+    name = " ".join(part for part in [user.first_name, user.last_name] if part) or "не указано"
+    await callback.message.answer(
+        "<b>Данные пользователя</b>\n\n"
+        f"ФИО: {escape(name)}\n"
+        f"Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"Username: {escape(username)}\n"
+        f"Возраст: {user.age if user.age is not None else 'не указан'}\n"
+        f"Страна: {escape(user.country or 'не указана')}\n"
+        f"Телефон: {escape(user.phone or 'не указан')}\n"
+        f"Email: {escape(user.email or 'не указан')}\n"
+        f"История участия: {escape(user.participation_history or 'не указана')}\n"
+        f"Уведомления: {'включены' if user.is_subscribed else 'отключены'}\n"
+        f"Регистрация: {format_datetime(user.registered_at, settings.default_timezone)}",
+        reply_markup=support_ticket_actions(ticket),
+    )
     await callback.answer()
 
 
@@ -94,6 +129,9 @@ async def support_reply(
         file_size = message.document.file_size
     if file_size is not None and file_size > settings.max_upload_bytes:
         await message.answer("Файл превышает допустимый размер.")
+        return
+    if not message.text and not message.caption and not message.photo and not message.document:
+        await message.answer("Отправьте текст, фотографию или документ.")
         return
     ticket = await SupportRepository(session).get(str(data["ticket_id"]))
     if ticket is None:
@@ -137,7 +175,7 @@ async def support_reply(
     response_text = message.text or message.caption or "Вложение"
     await bot.send_message(
         ticket.user.telegram_id,
-        f"Ответ по обращению №{ticket.number}:\n\n{response_text}",
+        f"Ответ администратора:\n\n{response_text}",
     )
     if attachment and attachment.file_id:
         if attachment.file_type == FileType.PHOTO:
@@ -157,27 +195,3 @@ async def support_reply(
     )
     await state.clear()
     await message.answer("Ответ отправлен пользователю.")
-
-
-@router.callback_query(F.data.startswith("astclaim:"))
-async def claim_ticket(callback: CallbackQuery, session: AsyncSession, admin_model: Admin) -> None:
-    ticket = await SupportRepository(session).get(callback.data.split(":", 1)[1])
-    if ticket:
-        ticket.assigned_admin_id = admin_model.id
-        ticket.status = TicketStatus.IN_PROGRESS
-    await callback.answer("Обращение назначено на вас", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("aststatus:"))
-async def ticket_status(callback: CallbackQuery, session: AsyncSession) -> None:
-    _, ticket_id, raw_status = callback.data.split(":", 2)
-    ticket = await SupportRepository(session).get(ticket_id)
-    if ticket is None:
-        await callback.answer("Не найдено", show_alert=True)
-        return
-    ticket.status = TicketStatus(raw_status)
-    if ticket.status == TicketStatus.CLOSED:
-        ticket.closed_at = utcnow()
-    else:
-        ticket.closed_at = None
-    await callback.answer("Статус изменён", show_alert=True)

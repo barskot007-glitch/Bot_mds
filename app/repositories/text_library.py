@@ -14,15 +14,11 @@ class TextLibraryRepository:
         self.session = session
 
     async def seed_defaults(self, defaults: Mapping[str, Sequence[str]]) -> None:
-        existing_count = int(
-            await self.session.scalar(
-                select(func.count(BotText.id)).where(BotText.deleted_at.is_(None))
-            )
-            or 0
-        )
-        if existing_count > 0:
-            return
+        existing_keys = set(await self.session.scalars(select(BotText.text_key).distinct()))
+        created = False
         for text_key, items in defaults.items():
+            if text_key in existing_keys:
+                continue
             for position, content in enumerate(items):
                 self.session.add(
                     BotText(
@@ -32,7 +28,9 @@ class TextLibraryRepository:
                         is_active=True,
                     )
                 )
-        await self.session.flush()
+                created = True
+        if created:
+            await self.session.flush()
 
     async def get_random_active(self, text_key: str) -> BotText | None:
         item: BotText | None = await self.session.scalar(

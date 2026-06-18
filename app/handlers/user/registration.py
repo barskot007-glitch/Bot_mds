@@ -14,6 +14,7 @@ from app.models.users_events import User
 from app.services.text_library import TextLibraryService
 from app.services.users import UserService
 from app.states.user import RegistrationStates
+from app.utils.validators import validate_email, validate_phone
 
 router = Router(name="user_registration")
 NAME_PATTERN = re.compile(r"^[A-Za-zА-Яа-яЁёÀ-ÖØ-öø-ÿ'’\- ]{2,128}$")
@@ -21,6 +22,31 @@ NAME_PATTERN = re.compile(r"^[A-Za-zА-Яа-яЁёÀ-ÖØ-öø-ÿ'’\- ]{2,128}
 
 def valid_name(value: str) -> bool:
     return bool(NAME_PATTERN.fullmatch(value.strip()))
+
+
+def message_phone(message: Message) -> str:
+    if message.contact is not None:
+        return validate_phone(message.contact.phone_number)
+    return validate_phone(message.text or "")
+
+
+async def show_main_menu(message: Message, session: AsyncSession) -> None:
+    texts = TextLibraryService(session)
+    await message.answer(await texts.get("main_menu"), reply_markup=main_menu(), parse_mode=None)
+
+
+async def finish_contact_completion(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    await state.clear()
+    texts = TextLibraryService(session)
+    await message.answer(
+        await texts.get("registration_contacts_complete"),
+        reply_markup=main_menu(),
+        parse_mode=None,
+    )
 
 
 @router.message(CommandStart())
@@ -37,9 +63,17 @@ async def start(
     texts = TextLibraryService(session)
     if user_model.registration_completed:
         await state.clear()
-        await message.answer(
-            await texts.get("main_menu"), reply_markup=main_menu(), parse_mode=None
-        )
+        if not user_model.phone:
+            await state.update_data(profile_completion=True)
+            await state.set_state(RegistrationStates.phone)
+            await message.answer(await texts.get("registration_phone"), parse_mode=None)
+            return
+        if not user_model.email:
+            await state.update_data(profile_completion=True)
+            await state.set_state(RegistrationStates.email)
+            await message.answer(await texts.get("registration_email"), parse_mode=None)
+            return
+        await show_main_menu(message, session)
         return
     await state.clear()
     await state.set_state(RegistrationStates.first_name)
@@ -103,6 +137,63 @@ async def registration_country(message: Message, state: FSMContext, session: Asy
         await message.answer("Укажите корректное название страны длиной от 2 до 128 символов.")
         return
     await state.update_data(country=country)
+    await state.set_state(RegistrationStates.phone)
+    await message.answer(
+        await TextLibraryService(session).get("registration_phone"), parse_mode=None
+    )
+
+
+@router.message(RegistrationStates.phone)
+async def registration_phone(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    user_model: User,
+) -> None:
+    try:
+        phone = message_phone(message)
+    except ValueError:
+        await message.answer(
+            "Укажите корректный номер телефона: можно использовать +, цифры, пробелы, скобки и дефисы."
+        )
+        return
+    data = await state.get_data()
+    if bool(data.get("profile_completion")) and user_model.email:
+        user_model.phone = phone
+        await session.flush()
+        await finish_contact_completion(message, state, session)
+        return
+    await state.update_data(phone=phone)
+    await state.set_state(RegistrationStates.email)
+    await message.answer(
+        await TextLibraryService(session).get("registration_email"), parse_mode=None
+    )
+
+
+@router.message(RegistrationStates.email, F.text)
+async def registration_email(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    user_model: User,
+) -> None:
+    try:
+        email = validate_email(message.text or "")
+    except ValueError:
+        await message.answer(
+            "Укажите корректный адрес электронной почты, например name@example.com."
+        )
+        return
+    data = await state.get_data()
+    if bool(data.get("profile_completion")):
+        phone = data.get("phone")
+        if phone:
+            user_model.phone = str(phone)
+        user_model.email = email
+        await session.flush()
+        await finish_contact_completion(message, state, session)
+        return
+    await state.update_data(email=email)
     await state.set_state(RegistrationStates.participation_history)
     await message.answer(
         await TextLibraryService(session).get("registration_history"), parse_mode=None
@@ -157,6 +248,8 @@ async def registration_data_consent(
         first_name=str(data["first_name"]),
         last_name=str(data["last_name"]),
         country=str(data["country"]),
+        phone=str(data["phone"]),
+        email=str(data["email"]),
         age=int(data["age"]),
         participation_history=str(data["participation_history"]),
         notifications_consent=bool(data["notifications_consent"]),

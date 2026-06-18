@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import Settings
 from app.models.users_events import User
 from app.repositories.users import UserRepository
-from app.utils.validators import validate_age
+from app.utils.validators import validate_age, validate_email, validate_phone
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +64,8 @@ class UserService:
         user: User,
         *,
         country: str,
+        phone: str,
+        email: str,
         age: int,
         notifications_consent: bool,
         data_processing_consent: bool,
@@ -79,6 +81,8 @@ class UserService:
             first_name=first_name.strip() if first_name else None,
             last_name=last_name.strip() if last_name else None,
             country=country.strip(),
+            phone=validate_phone(phone),
+            email=validate_email(email),
             age=validate_age(age),
             age_group=age_group,
             participation_history=(participation_history or "").strip() or None,
