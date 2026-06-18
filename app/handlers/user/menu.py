@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.keyboards.user import faq_keyboard, main_menu, settings_keyboard
@@ -10,6 +10,28 @@ from app.repositories.faq import FAQRepository
 from app.services.text_library import TextLibraryService
 
 router = Router(name="user_menu")
+
+
+def channel_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Открыть канал", url=url)]]
+    )
+
+
+@router.message(F.text == "📡 М'МДС")
+async def open_youth_channel(message: Message) -> None:
+    await message.answer(
+        "Молодёжный канал МДС:",
+        reply_markup=channel_keyboard("https://t.me/MDS_molod"),
+    )
+
+
+@router.message(F.text == "📡 МДС")
+async def open_mds_channel(message: Message) -> None:
+    await message.answer(
+        "Официальный канал Московского Дома соотечественника:",
+        reply_markup=channel_keyboard("https://t.me/mosdoms"),
+    )
 
 
 @router.callback_query(F.data == "user:menu")
