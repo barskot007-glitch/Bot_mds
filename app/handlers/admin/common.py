@@ -3,7 +3,7 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.keyboards.admin import admin_menu
 from app.models.content_audit import Admin
@@ -14,7 +14,14 @@ router = Router(name="admin_common")
 
 @router.message(Command("admin"))
 async def admin_entry(message: Message, admin_model: Admin) -> None:
-    await message.answer(f"{ADMIN_MENU}\nРоль: {admin_model.role.value}", reply_markup=admin_menu())
+    await message.answer(
+        "Режим администратора включён.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await message.answer(
+        f"{ADMIN_MENU}\nРоль: {admin_model.role.value}",
+        reply_markup=admin_menu(),
+    )
 
 
 @router.callback_query(F.data == "adm:menu")
