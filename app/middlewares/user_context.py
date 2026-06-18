@@ -12,6 +12,38 @@ from app.services.users import UserService
 from app.utils.time import utcnow
 
 
+def extract_telegram_user(event: TelegramObject) -> Any:
+    """Получает Telegram-пользователя из Message, CallbackQuery или Update."""
+
+    direct_user = getattr(event, "from_user", None)
+    if direct_user is not None:
+        return direct_user
+
+    update_fields = (
+        "message",
+        "edited_message",
+        "channel_post",
+        "edited_channel_post",
+        "callback_query",
+        "inline_query",
+        "chosen_inline_result",
+        "shipping_query",
+        "pre_checkout_query",
+        "my_chat_member",
+        "chat_member",
+        "chat_join_request",
+    )
+
+    for field_name in update_fields:
+        nested_event = getattr(event, field_name, None)
+        nested_user = getattr(nested_event, "from_user", None)
+
+        if nested_user is not None:
+            return nested_user
+
+    return None
+
+
 class UserContextMiddleware(BaseMiddleware):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -22,11 +54,14 @@ class UserContextMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        telegram_user = getattr(event, "from_user", None)
+        telegram_user = extract_telegram_user(event)
         session = data.get("session")
+
         if telegram_user is not None and isinstance(session, AsyncSession):
             user = await UserService(session, self.settings).ensure_user(
-                telegram_user, now=utcnow()
+                telegram_user,
+                now=utcnow(),
             )
             data["user_model"] = user
+
         return await handler(event, data)
