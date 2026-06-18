@@ -1,0 +1,737 @@
+# Telegram Events Bot
+
+Production-проект Telegram-бота для управления мероприятиями, регистрациями пользователей, рассылками, обращениями в поддержку, FAQ, аналитикой и экспортом данных.
+
+В проекте нет отдельной HTML-админки. Пользовательский интерфейс и административная панель работают непосредственно внутри Telegram через команды, inline-кнопки, reply-клавиатуры и FSM-сценарии.
+
+## 1. Основные возможности
+
+### Пользовательская часть
+
+- регистрация после `/start`;
+- сохранение Telegram ID, username, имени, фамилии, языка, страны, возраста, возрастной группы, источника deep-link и согласий;
+- главное меню на русском языке;
+- список актуальных мероприятий с пагинацией и фильтрами;
+- карточки мероприятий с изображениями, документами, картой и внешними ссылками;
+- регистрация, отмена регистрации и лист ожидания;
+- автоматическое закрытие регистрации при заполнении лимита;
+- автоматическое перемещение следующего пользователя из листа ожидания после освобождения места;
+- список будущих регистраций и история участия;
+- FAQ;
+- настройка подписки на уведомления;
+- обращения в поддержку с текстом, изображениями, документами и ссылками;
+- переписка с администратором внутри одного обращения.
+
+### Telegram-админка
+
+Вход выполняется командой `/admin`.
+
+- управление мероприятиями;
+- черновики, публикация, автопубликация, архивирование, отмена и мягкое удаление;
+- редактирование полей мероприятия;
+- изображения, документы и ссылки с изменением порядка;
+- лимиты, дедлайны и напоминания;
+- участники, посещаемость, отсутствие и комментарии;
+- сообщения участникам через устойчивую очередь рассылки;
+- создание, редактирование, предварительный просмотр и удаление рассылок;
+- тестовая отправка администратору;
+- немедленная и отложенная отправка;
+- комбинированная сегментация аудитории;
+- массовая отправка пакетами с ограничением конкурентности;
+- обращения: просмотр, назначение на себя, ответы, статусы, закрытие и повторное открытие;
+- CRUD для FAQ, порядок и публикация;
+- пользователи, аналитика, журнал действий;
+- экспорт CSV и XLSX;
+- управление администраторами и ролями.
+
+### Аналитика и tracking
+
+- общее количество, новые, активные и неактивные пользователи;
+- подписки, отписки и блокировки бота;
+- распределение по странам и возрастным группам;
+- динамика регистраций по дням;
+- статистика рассылок и технически успешных отправок;
+- ошибки, блокировки и прогресс рассылки;
+- переходы по персональным tracking-ссылкам;
+- клики по inline-кнопкам;
+- статистика каждого мероприятия;
+- просмотры и уникальные просмотры карточки;
+- регистрации, отмены, посещения, отсутствие, конверсия и заполняемость.
+
+Telegram Bot API не сообщает достоверное открытие или прочтение сообщения. Проект не подменяет эту метрику фактом успешного ответа `sendMessage`. В интерфейсе явно указано, что открытия недоступны.
+
+## 2. Технологии
+
+- Python 3.12+;
+- aiogram 3.x;
+- SQLAlchemy 2.x async ORM;
+- Alembic;
+- PostgreSQL + asyncpg;
+- SQLite + aiosqlite для локальной разработки;
+- Pydantic Settings;
+- APScheduler;
+- aiohttp;
+- openpyxl;
+- Docker и Docker Compose;
+- pytest и pytest-asyncio;
+- Ruff;
+- MyPy;
+- pre-commit.
+
+Весь доступ к базе данных асинхронный.
+
+## 3. Структура проекта
+
+```text
+telegram_events_bot/
+├── app/
+│   ├── config/                 # настройки и logging
+│   ├── database/               # engine, session factory, инициализация superadmin
+│   ├── filters/                # централизованная проверка прав
+│   ├── handlers/
+│   │   ├── admin/              # Telegram-админка
+│   │   └── user/               # пользовательские сценарии
+│   ├── keyboards/              # inline/reply-клавиатуры
+│   ├── middlewares/            # DB session, user context, rate limit, audit
+│   ├── models/                 # SQLAlchemy ORM-модели
+│   ├── repositories/           # запросы к базе данных
+│   ├── scheduler/              # APScheduler и восстановление задач
+│   ├── services/               # бизнес-логика
+│   ├── states/                 # FSM-состояния
+│   ├── texts/                  # пользовательские тексты и статусы
+│   ├── utils/                  # время и валидация
+│   ├── web/                    # /health и /t/{token}
+│   └── bot.py                  # сборка Dispatcher
+├── alembic/
+│   ├── versions/               # первоначальная миграция
+│   ├── env.py
+│   └── script.py.mako
+├── tests/                      # автоматические тесты
+├── main.py                     # polling/webhook entrypoint
+├── alembic.ini
+├── Dockerfile
+├── docker-compose.yml
+├── railway.json
+├── Procfile
+├── requirements.txt
+├── pyproject.toml
+├── .pre-commit-config.yaml
+├── .env.example
+└── README.md
+```
+
+## 4. Модели базы данных
+
+Проект содержит 24 таблицы:
+
+- `users`;
+- `admins`;
+- `events`;
+- `event_files`;
+- `event_links`;
+- `event_views`;
+- `event_reminders`;
+- `registrations`;
+- `broadcasts`;
+- `broadcast_files`;
+- `broadcast_buttons`;
+- `broadcast_recipients`;
+- `support_tickets`;
+- `support_messages`;
+- `support_attachments`;
+- `faq`;
+- `notifications`;
+- `tracking_links`;
+- `link_clicks`;
+- `scheduled_tasks`;
+- `sequence_counters`;
+- `user_actions`;
+- `admin_actions`;
+- `logs`.
+
+Для критичных сущностей применяются уникальные ограничения, индексы, внешние ключи, enum-статусы, timestamps и мягкое удаление. Повторная регистрация на одно мероприятие блокируется уникальным ограничением `user_id + event_id` и проверкой бизнес-логики.
+
+## 5. Системные требования
+
+Для запуска без Docker:
+
+- Python 3.12 или новее;
+- Git;
+- PostgreSQL 14+ для production либо SQLite для локального режима.
+
+Для контейнерного запуска:
+
+- Docker;
+- Docker Compose v2.
+
+## 6. Создание Telegram-бота через BotFather
+
+1. Откройте `@BotFather` в Telegram.
+2. Выполните `/newbot`.
+3. Укажите имя и username бота.
+4. Скопируйте полученный токен.
+5. Рекомендуется настроить команды через `/setcommands`:
+
+```text
+start - Запустить бота
+admin - Открыть административную панель
+```
+
+Токен необходимо хранить только в `.env`, Railway Variables или другом секретном хранилище. Не добавляйте его в Git.
+
+## 7. Настройка переменных окружения
+
+Создайте локальный файл `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Минимальная конфигурация для локального polling:
+
+```env
+BOT_TOKEN=123456789:replace_with_real_token
+BOT_MODE=polling
+DATABASE_URL=sqlite+aiosqlite:///./bot.db
+SUPERADMIN_IDS=123456789
+APP_ENV=development
+```
+
+### Полный список переменных
+
+| Переменная | Назначение | Значение по умолчанию |
+|---|---|---|
+| `BOT_TOKEN` | Токен от BotFather | обязательная |
+| `BOT_MODE` | `polling` или `webhook` | `polling` |
+| `DATABASE_URL` | Async SQLAlchemy URL | SQLite локально |
+| `SUPERADMIN_IDS` | Telegram ID superadmin через запятую | пусто |
+| `ADMIN_CHAT_ID` | Чат для уведомлений о новых обращениях | пусто |
+| `WEBHOOK_BASE_URL` | Публичный HTTPS URL без завершающего `/` | пусто |
+| `WEBHOOK_PATH` | Путь Telegram webhook | `/webhook` |
+| `WEBHOOK_SECRET` | Секрет заголовка webhook | пусто |
+| `PORT` | Порт HTTP-сервера | `8080` |
+| `HOST` | Адрес прослушивания | `0.0.0.0` |
+| `TRACKING_BASE_URL` | Публичная база URL для tracking-ссылок | `WEBHOOK_BASE_URL` |
+| `LOG_LEVEL` | Уровень логирования | `INFO` |
+| `LOG_TO_FILE` | Локальная запись логов в файл | `false` |
+| `DEFAULT_TIMEZONE` | IANA-часовой пояс | `Asia/Yerevan` |
+| `ACTIVE_USER_DAYS` | Период активности пользователя | `30` |
+| `NEW_USER_DAYS` | Период для сегмента «новые» | `7` |
+| `BROADCAST_BATCH_SIZE` | Размер пакета рассылки | `25` |
+| `BROADCAST_CONCURRENCY` | Параллельные отправки внутри пакета | `5` |
+| `BROADCAST_DELAY_SECONDS` | Пауза между пакетами | `1` |
+| `BROADCAST_MAX_ATTEMPTS` | Максимум повторных попыток | `4` |
+| `RATE_LIMIT_SECONDS` | Защита от частых пользовательских запросов | `0.6` |
+| `MAX_MESSAGE_LENGTH` | Максимальная длина текста | `4096` |
+| `MAX_UPLOAD_BYTES` | Максимальный размер принимаемого файла | `20000000` |
+| `AGE_GROUPS` | Настраиваемые возрастные диапазоны | см. `.env.example` |
+| `APP_ENV` | `development`, `test` или `production` | `development` |
+
+Пример нескольких superadmin:
+
+```env
+SUPERADMIN_IDS=111111111,222222222
+```
+
+Пример PostgreSQL:
+
+```env
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/database
+APP_ENV=production
+```
+
+При `APP_ENV=production` приложение намеренно отклоняет SQLite-конфигурацию.
+
+## 8. Локальный запуск без Docker
+
+### 8.1. Создание виртуального окружения
+
+Linux/macOS:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+### 8.2. Установка зависимостей
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 8.3. Миграции и запуск
+
+```bash
+alembic upgrade head
+python main.py
+```
+
+В polling-режиме приложение также запускает HTTP healthcheck на:
+
+```text
+http://localhost:8080/health
+```
+
+## 9. Локальный запуск через Docker Compose
+
+1. Скопируйте `.env.example` в `.env`.
+2. Укажите `BOT_TOKEN` и `SUPERADMIN_IDS`.
+3. Запустите:
+
+```bash
+docker compose up --build
+```
+
+Compose поднимает:
+
+- PostgreSQL 16;
+- приложение бота;
+- автоматическое выполнение `alembic upgrade head`;
+- healthcheck на порту `8080`.
+
+Остановка:
+
+```bash
+docker compose down
+```
+
+Остановка с удалением локального тома PostgreSQL:
+
+```bash
+docker compose down -v
+```
+
+Последняя команда удаляет локальную базу и должна использоваться только осознанно.
+
+## 10. Миграции Alembic
+
+Применить все миграции:
+
+```bash
+alembic upgrade head
+```
+
+Создать новую миграцию после изменения моделей:
+
+```bash
+alembic revision --autogenerate -m "description"
+```
+
+Откатить одну миграцию:
+
+```bash
+alembic downgrade -1
+```
+
+Проверить расхождение моделей и миграций:
+
+```bash
+alembic check
+```
+
+Миграции настроены через async SQLAlchemy и поддерживают SQLite и PostgreSQL.
+
+## 11. Первый администратор
+
+1. Узнайте свой Telegram ID.
+2. Добавьте его в `SUPERADMIN_IDS`.
+3. Примените миграции.
+4. Запустите приложение.
+5. Откройте бота и выполните `/admin`.
+
+При запуске ID из `SUPERADMIN_IDS` синхронизируются с таблицей `admins` и получают роль `superadmin`.
+
+### Роли
+
+- `superadmin` — полный доступ и управление администраторами;
+- `admin` — мероприятия, рассылки, пользователи, поддержка, аналитика, экспорт и журнал;
+- `moderator` — мероприятия, FAQ и статистика;
+- `support` — обращения пользователей.
+
+Управление администраторами выполняется через раздел «Администраторы» в Telegram-панели. Критичные проверки выполняются централизованно и повторяются для callbacks и FSM-состояний.
+
+## 12. Polling-режим
+
+Конфигурация:
+
+```env
+BOT_MODE=polling
+```
+
+При старте приложение удаляет текущий Telegram webhook без удаления ожидающих обновлений и начинает long polling. Одновременно работает HTTP-сервер `/health` и `/t/{token}`.
+
+Polling подходит для локальной разработки и для отдельного Railway worker. Нельзя одновременно запускать несколько polling-инстансов одного токена.
+
+## 13. Webhook-режим
+
+Конфигурация:
+
+```env
+BOT_MODE=webhook
+WEBHOOK_BASE_URL=https://your-service.up.railway.app
+WEBHOOK_PATH=/webhook
+WEBHOOK_SECRET=replace_with_long_random_secret
+TRACKING_BASE_URL=https://your-service.up.railway.app
+PORT=8080
+```
+
+Секрет можно сгенерировать командой:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+При запуске приложение самостоятельно регистрирует webhook в Telegram и передаёт `WEBHOOK_SECRET` как secret token. aiogram проверяет входящий заголовок Telegram.
+
+## 14. Развёртывание на Railway из GitHub
+
+Проект содержит `Dockerfile` и `railway.json`. Railway использует Dockerfile, запускает миграции и проверяет `/health`.
+
+### 14.1. Подготовка GitHub
+
+```bash
+git init
+git add .
+git commit -m "Initial Telegram bot"
+git branch -M main
+git remote add origin <YOUR_GITHUB_REPOSITORY>
+git push -u origin main
+```
+
+Убедитесь, что `.env` не попал в коммит.
+
+### 14.2. Создание проекта Railway
+
+1. Создайте новый проект Railway.
+2. Выберите развёртывание из GitHub repository.
+3. Подключите подготовленный репозиторий.
+4. Добавьте сервис PostgreSQL через `New` → `Database` → `PostgreSQL`.
+5. В сервисе приложения откройте `Variables`.
+
+### 14.3. Подключение PostgreSQL
+
+Добавьте reference variable стандартного URL PostgreSQL:
+
+```env
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+Имя `Postgres` должно совпадать с названием database-сервиса на Railway. Railway передаёт стандартный URL вида `postgresql://...`; приложение безопасно преобразует его в `postgresql+asyncpg://...` при загрузке настроек. Также можно сразу указать полный async SQLAlchemy URL вручную.
+
+Не используйте SQLite в production без подключённого постоянного Volume. Для этого проекта штатный production-вариант — PostgreSQL.
+
+### 14.4. Обязательные Railway Variables
+
+```env
+BOT_TOKEN=...
+DATABASE_URL=postgresql+asyncpg://...
+SUPERADMIN_IDS=...
+APP_ENV=production
+DEFAULT_TIMEZONE=Asia/Yerevan
+LOG_LEVEL=INFO
+```
+
+### 14.5. Рекомендуемый webhook-вариант
+
+1. В Settings → Networking нажмите `Generate Domain`.
+2. Скопируйте HTTPS-домен.
+3. Добавьте:
+
+```env
+BOT_MODE=webhook
+WEBHOOK_BASE_URL=https://your-service.up.railway.app
+TRACKING_BASE_URL=https://your-service.up.railway.app
+WEBHOOK_PATH=/webhook
+WEBHOOK_SECRET=<случайная длинная строка>
+```
+
+4. Выполните redeploy.
+5. Проверьте:
+
+```text
+https://your-service.up.railway.app/health
+```
+
+Ожидаемый ответ:
+
+```json
+{"status":"ok","database":"available"}
+```
+
+### 14.6. Railway polling-вариант
+
+Можно оставить:
+
+```env
+BOT_MODE=polling
+```
+
+Сервис всё равно слушает `PORT` и отдаёт `/health`. Для одного токена должен работать только один polling-инстанс. Автомасштабирование на несколько реплик в polling-режиме не применяется.
+
+### 14.7. Команда запуска и миграции
+
+`railway.json` задаёт отдельные команды:
+
+```text
+preDeployCommand: alembic upgrade head
+startCommand: python main.py
+```
+
+Railway применяет миграции до запуска нового процесса. Dockerfile для обычного контейнерного запуска выполняет ту же последовательность через `alembic upgrade head && python main.py`.
+
+## 15. Рассылки и ограничения Telegram
+
+Механизм рассылки:
+
+- рассчитывает аудиторию до подтверждения;
+- создаёт уникальную запись получателя;
+- работает пакетами;
+- ограничивает параллелизм через semaphore;
+- не создаёт десятки тысяч `asyncio`-задач одновременно;
+- обрабатывает `RetryAfter`;
+- повторяет временные сетевые и серверные ошибки;
+- фиксирует блокировку бота при `Forbidden`;
+- сохраняет прогресс в PostgreSQL/SQLite;
+- не отправляет повторно уже обработанному получателю;
+- восстанавливает рассылки со статусом `sending` после перезапуска;
+- корректно завершает фоновые задачи при shutdown.
+
+Успешная отправка означает, что Telegram технически принял вызов Bot API. Она не означает, что пользователь прочитал сообщение.
+
+## 16. Tracking-ссылки
+
+Для внешних URL проект создаёт персональные ссылки:
+
+```text
+https://your-domain/t/{token}
+```
+
+При переходе сохраняются:
+
+- пользователь;
+- рассылка или мероприятие;
+- кнопка;
+- время;
+- хэш IP;
+- User-Agent.
+
+После записи выполняется HTTP redirect на конечный URL. Для работы tracking в polling-режиме сервис также должен иметь публичный домен и заполненный `TRACKING_BASE_URL`.
+
+## 17. Scheduler и восстановление после перезапуска
+
+APScheduler запускает периодические обработчики для:
+
+- запланированных рассылок;
+- автопубликации мероприятий;
+- закрытия регистрации по дедлайну;
+- перевода завершённых мероприятий в статус «Завершено»;
+- напоминаний;
+- обработки устойчивых задач из `scheduled_tasks`;
+- очистки завершённых задач старше 30 дней.
+
+APScheduler не является единственным хранилищем расписания. Источником истины остаётся база данных. После рестарта приложение восстанавливает незавершённые и просроченные задачи.
+
+## 18. Экспорт
+
+В Telegram-админке доступны CSV и XLSX:
+
+- пользователи;
+- аудитория выбранной рассылки;
+- участники мероприятия;
+- история участия;
+- обращения;
+- получатели рассылки;
+- статистика мероприятия;
+- статистика рассылки.
+
+Файлы формируются в памяти. Постоянные копии на локальном диске не создаются.
+
+## 19. Тестирование и качество кода
+
+Запуск тестов:
+
+```bash
+pytest
+```
+
+Проверка Ruff:
+
+```bash
+ruff check .
+ruff format --check .
+```
+
+Проверка типов:
+
+```bash
+mypy app
+```
+
+Все проверки одной командой:
+
+```bash
+ruff check . && ruff format --check . && mypy app && pytest
+```
+
+### pre-commit
+
+```bash
+pre-commit install
+pre-commit run --all-files
+```
+
+Тесты покрывают:
+
+- регистрацию пользователя;
+- возрастные группы;
+- права администраторов;
+- создание мероприятия;
+- регистрацию и защиту от дублей;
+- лимит и лист ожидания;
+- выбор аудитории;
+- создание рассылки;
+- статистику;
+- блокировку пользователя;
+- tracking-ссылки;
+- восстановление задач;
+- ограничения callback data.
+
+## 20. Резервное копирование
+
+### PostgreSQL
+
+Создание дампа:
+
+```bash
+pg_dump "$DATABASE_URL_SYNC" --format=custom --file=backup.dump
+```
+
+Для `pg_dump` используйте обычный PostgreSQL URL без `+asyncpg`, например:
+
+```text
+postgresql://user:password@host:5432/database
+```
+
+Восстановление:
+
+```bash
+pg_restore --clean --if-exists --dbname="$DATABASE_URL_SYNC" backup.dump
+```
+
+На Railway также рекомендуется включить штатные backups базы данных в соответствии с используемым тарифом.
+
+### SQLite локально
+
+Остановите приложение и скопируйте `bot.db`. Не выполняйте простое копирование файла во время активной записи.
+
+## 21. Безопасность
+
+- секреты не хранятся в коде;
+- `.env` исключён из Git;
+- production с SQLite блокируется настройками;
+- права и роли проверяются централизованно;
+- административные роутеры защищены фильтрами;
+- callbacks содержат только компактные идентификаторы и разрешённые действия;
+- пользовательские URL валидируются;
+- размеры вложений ограничиваются;
+- критичные удаления требуют подтверждения;
+- мероприятия и рассылки удаляются мягко;
+- действия администраторов записываются в журнал;
+- чувствительные значения не выводятся в логи;
+- повторные callbacks и повторная регистрация защищены идемпотентностью и ограничениями БД.
+
+## 22. Возможные ошибки
+
+### `BOT_TOKEN не задан`
+
+Заполните `BOT_TOKEN` в `.env` или Railway Variables.
+
+### `SQLite запрещён в production`
+
+При `APP_ENV=production` подключите PostgreSQL через `postgresql+asyncpg://...`.
+
+### Webhook не запускается
+
+Проверьте:
+
+- `WEBHOOK_BASE_URL` начинается с `https://`;
+- `WEBHOOK_SECRET` заполнен;
+- Railway domain опубликован;
+- `WEBHOOK_PATH` начинается с `/`;
+- сервис слушает переменную `PORT`.
+
+### Tracking не считает переходы
+
+Заполните `TRACKING_BASE_URL` публичным HTTPS-доменом. Локальный `localhost` недоступен пользователям Telegram.
+
+### Бот не отвечает в polling
+
+Проверьте, что:
+
+- тот же токен не запущен в другом процессе;
+- нет активного webhook у другого приложения;
+- Railway не запустил несколько polling-реплик.
+
+### Ошибка подключения PostgreSQL
+
+Проверьте префикс:
+
+```text
+postgresql+asyncpg://
+```
+
+и Railway reference variables `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, `PGDATABASE`.
+
+### Миграция не соответствует моделям
+
+```bash
+alembic check
+alembic revision --autogenerate -m "schema update"
+alembic upgrade head
+```
+
+## 23. Первый запуск: краткая последовательность
+
+```bash
+cp .env.example .env
+# заполнить BOT_TOKEN и SUPERADMIN_IDS
+python -m venv .venv
+# активировать .venv
+pip install -r requirements.txt
+alembic upgrade head
+python main.py
+```
+
+После этого:
+
+1. Откройте бота.
+2. Выполните `/start` и завершите регистрацию.
+3. Выполните `/admin` с Telegram ID из `SUPERADMIN_IDS`.
+4. Создайте FAQ и первое мероприятие.
+5. Опубликуйте мероприятие.
+6. Для tracking укажите публичный `TRACKING_BASE_URL`.
+
+## 24. Масштабирование
+
+Архитектура рассчитана на десятки тысяч пользователей за счёт:
+
+- connection pooling PostgreSQL;
+- пагинации;
+- индексов;
+- пакетных запросов;
+- bounded concurrency;
+- выборки аудитории страницами;
+- отсутствия загрузки всей базы пользователей в память;
+- `selectinload` для связанных данных;
+- устойчивых записей получателей и фоновых задач;
+- graceful shutdown.
+
+При горизонтальном масштабировании потребуется распределённая блокировка фоновых задач либо выделенный единственный scheduler/worker. Для обычного Railway deployment запускайте одну реплику процесса бота.

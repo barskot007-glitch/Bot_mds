@@ -1,0 +1,33 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF"]
+ignore = ["B008", "E501", "RUF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+exclude = ["alembic/versions"]
+
+[[tool.mypy.overrides]]
+module = ["apscheduler.*", "openpyxl.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q --disable-warnings --maxfail=1"
+
+[[tool.mypy.overrides]]
+module = ["app.handlers.*", "app.keyboards.*", "app.filters.*", "app.middlewares.*"]
+disable_error_code = ["union-attr", "arg-type", "no-untyped-def", "assignment", "unreachable", "index"]
