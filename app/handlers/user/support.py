@@ -94,6 +94,22 @@ async def support_list_callback(
     await callback.answer()
 
 
+
+
+@router.message(F.text == "📞 Связаться с нами")
+async def contact_from_reply_menu(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    await state.set_state(SupportStates.message)
+    await state.update_data(subject="Обращение из главного меню")
+    await message.answer(
+        await TextLibraryService(session).get("support_message"),
+        parse_mode=None,
+    )
+
+
 @router.callback_query(F.data == "menu:contact")
 async def contact_from_main_menu(
     callback: CallbackQuery,
