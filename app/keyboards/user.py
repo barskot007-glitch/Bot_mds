@@ -3,6 +3,8 @@ from __future__ import annotations
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -12,25 +14,41 @@ from app.models.users_events import Event, Registration
 from app.texts.common import EVENT_STATUS_LABELS, REGISTRATION_STATUS_LABELS
 from app.utils.time import format_datetime
 
+# Переключатель расширенного пользовательского меню.
+# False — показываются только четыре основных раздела.
+# True — возвращаются «Мои регистрации», «История участия», FAQ и настройки.
+SHOW_EXTENDED_MENU = False
 
-def main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📅 Мероприятия", callback_data="menu:events")],
+
+def main_menu() -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = [
+        [KeyboardButton(text="📅 Мероприятия")],
+        [
+            KeyboardButton(text="📡 М'МДС"),
+            KeyboardButton(text="📡 МДС"),
+        ],
+        [KeyboardButton(text="📞 Связаться с нами")],
+    ]
+
+    if SHOW_EXTENDED_MENU:
+        rows.extend(
             [
-                InlineKeyboardButton(text="📡 М'МДС", url="https://t.me/MDS_molod"),
-                InlineKeyboardButton(text="📡 МДС", url="https://t.me/mosdoms"),
-            ],
-            [InlineKeyboardButton(text="📞 Связаться с нами", callback_data="menu:contact")],
-            [
-                InlineKeyboardButton(text="Мои регистрации", callback_data="menu:registrations"),
-                InlineKeyboardButton(text="История участия", callback_data="menu:history"),
-            ],
-            [
-                InlineKeyboardButton(text="FAQ", callback_data="menu:faq"),
-                InlineKeyboardButton(text="Настройки уведомлений", callback_data="menu:settings"),
-            ],
-        ]
+                [
+                    KeyboardButton(text="Мои регистрации"),
+                    KeyboardButton(text="История участия"),
+                ],
+                [
+                    KeyboardButton(text="FAQ"),
+                    KeyboardButton(text="Настройки уведомлений"),
+                ],
+            ]
+        )
+
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выберите раздел",
     )
 
 
@@ -88,11 +106,13 @@ def event_card_keyboard(
         if active:
             builder.button(text="Отменить регистрацию", callback_data=f"evc:{event.id}")
         else:
-            builder.button(text="Зарегистрироваться", callback_data=f"evr:{event.id}")
+            builder.button(text="Принять участие", callback_data=f"evr:{event.id}")
     for label, url in tracked_links:
         builder.button(text=label[:64], url=url)
     for file in event.files[:5]:
-        label = file.file_name or ("Изображение" if file.file_type.value == "photo" else "Документ")
+        label = file.file_name or (
+            "Изображение" if file.file_type.value == "photo" else "Документ"
+        )
         builder.button(text=f"Файл: {label[:36]}", callback_data=f"evf:{file.id}")
     builder.button(text="К списку", callback_data="evl:all:0")
     builder.adjust(1)
@@ -114,9 +134,10 @@ def event_card_text(event: Event, registration: Registration | None, timezone_na
     if event.capacity:
         lines.append(f"Лимит участников: {event.capacity}")
     if registration:
-        lines.append(
-            f"Ваша регистрация: {REGISTRATION_STATUS_LABELS.get(registration.status.value, registration.status.value)}"
+        registration_label = REGISTRATION_STATUS_LABELS.get(
+            registration.status.value, registration.status.value
         )
+        lines.append(f"Ваша регистрация: {registration_label}")
     return "\n".join(lines)
 
 
@@ -124,7 +145,10 @@ def registrations_keyboard(registrations: list[Registration]) -> InlineKeyboardM
     builder = InlineKeyboardBuilder()
     for registration in registrations:
         builder.button(
-            text=f"{registration.event.title[:36]} — {REGISTRATION_STATUS_LABELS[registration.status.value]}",
+            text=(
+                f"{registration.event.title[:36]} — "
+                f"{REGISTRATION_STATUS_LABELS[registration.status.value]}"
+            ),
             callback_data=f"ev:{registration.event_id}",
         )
     builder.adjust(1)
