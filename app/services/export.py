@@ -14,9 +14,11 @@ from app.models.broadcast_support import (
     SupportMessage,
     SupportTicket,
 )
+from app.models.content_audit import Admin, AdminAction
 from app.models.enums import RegistrationStatus
 from app.models.users_events import Event, Registration, User
 from app.repositories.users import UserRepository
+from app.utils.admin_actions import human_action, human_entity
 from app.utils.time import format_datetime, utcnow
 
 
@@ -297,6 +299,53 @@ class ExportService:
             "Получатели",
             self.recipient_headers(),
             self.iter_broadcast_recipient_rows(broadcast_id),
+        )
+
+    @staticmethod
+    def admin_action_headers() -> list[str]:
+        return [
+            "Дата и время UTC",
+            "Telegram ID администратора",
+            "Имя администратора",
+            "Действие",
+            "Объект",
+        ]
+
+    async def iter_admin_action_rows(self) -> AsyncIterator[list[Any]]:
+        offset = 0
+        while True:
+            rows = (
+                await self.session.execute(
+                    select(AdminAction, Admin, User)
+                    .join(Admin, Admin.id == AdminAction.admin_id)
+                    .outerjoin(User, User.telegram_id == Admin.telegram_id)
+                    .order_by(AdminAction.created_at.desc())
+                    .offset(offset)
+                    .limit(self.PAGE_SIZE)
+                )
+            ).all()
+            if not rows:
+                return
+            for action, admin, user in rows:
+                admin_name = ""
+                if user is not None:
+                    admin_name = " ".join(
+                        part for part in [user.first_name, user.last_name] if part
+                    ) or (f"@{user.username}" if user.username else "")
+                yield [
+                    format_datetime(action.created_at, "UTC"),
+                    admin.telegram_id,
+                    admin_name,
+                    human_action(action.action, action.metadata_json),
+                    human_entity(action.entity_type),
+                ]
+            offset += len(rows)
+
+    async def admin_actions_xlsx(self) -> bytes:
+        return await self._async_xlsx(
+            "Журнал действий",
+            self.admin_action_headers(),
+            self.iter_admin_action_rows(),
         )
 
     @staticmethod

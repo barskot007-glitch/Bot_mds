@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings
 from app.keyboards.admin import (
+    admin_logs_keyboard,
     admins_keyboard,
     back_to_admin_keyboard,
     cancel_keyboard,
@@ -20,7 +21,6 @@ from app.keyboards.admin import (
     crm_filters_keyboard,
     export_keyboard,
     user_card_keyboard,
-    users_admin_keyboard,
     users_results_keyboard,
 )
 from app.models.content_audit import Admin, AdminAction
@@ -32,6 +32,7 @@ from app.services.export import ExportService
 from app.services.permissions import PermissionService
 from app.services.users import determine_age_group
 from app.states.admin import AdminManagementStates, AdminUserStates
+from app.utils.admin_actions import human_action
 from app.utils.time import format_datetime, utcnow
 from app.utils.validators import validate_email, validate_phone
 
@@ -42,7 +43,6 @@ router = Router(name="admin_management")
 async def dashboard(
     callback: CallbackQuery,
     session: AsyncSession,
-    settings: Settings,
     admin_model: Admin,
 ) -> None:
     if not PermissionService.has_permission(admin_model, "statistics"):
@@ -77,31 +77,14 @@ async def dashboard(
         )
         or 0
     )
-    actions = list(
-        await session.scalars(select(AdminAction).order_by(AdminAction.created_at.desc()).limit(10))
+    text = (
+        "<b>Основные показатели</b>\n\n"
+        f"👥 Пользователей в базе: <b>{total_users}</b>\n"
+        f"🆕 Новых регистраций за 24 часа: <b>{registrations_24h}</b>\n"
+        f"📅 Активных мероприятий: <b>{active_events}</b>\n"
+        f"✅ Заявок на участие: <b>{participants}</b>"
     )
-    lines = [
-        "<b>Статистика</b>",
-        "",
-        f"Пользователей в базе: {total_users}",
-        f"Регистраций за 24 часа: {registrations_24h}",
-        f"Активных мероприятий: {active_events}",
-        f"Нажали «Буду участвовать»: {participants}",
-        "",
-        "<b>Последние действия администраторов</b>",
-    ]
-    if actions:
-        for action in actions:
-            lines.append(
-                f"{format_datetime(action.created_at, settings.default_timezone)} · "
-                f"{escape(action.action)} · {escape(action.entity_type or '-')}"
-            )
-    else:
-        lines.append("Журнал пока пуст.")
-    await callback.message.answer(
-        "\n".join(lines),
-        reply_markup=back_to_admin_keyboard(),
-    )
+    await callback.message.answer(text, reply_markup=back_to_admin_keyboard())
     await callback.answer()
 
 
@@ -358,6 +341,7 @@ async def user_search_finish(
     message: Message,
     state: FSMContext,
     session: AsyncSession,
+    settings: Settings,
     admin_model: Admin,
 ) -> None:
     if not PermissionService.has_permission(admin_model, "users"):
@@ -367,12 +351,10 @@ async def user_search_finish(
     users = await UserRepository(session).search(message.text or "")
     await state.clear()
     if not users:
-        await message.answer("Пользователь не найден.", reply_markup=users_admin_keyboard())
+        await message.answer("Пользователь не найден.")
         return
-    await message.answer(
-        f"Найдено: {len(users)}",
-        reply_markup=users_results_keyboard(users),
-    )
+    for user in users:
+        await message.answer(user_card_text(user, settings))
 
 
 def user_card_text(user: object, settings: Settings) -> str:
@@ -677,35 +659,39 @@ async def admin_logs(
         await callback.answer("Недостаточно прав", show_alert=True)
         return
     actions = list(
-        await session.scalars(select(AdminAction).order_by(AdminAction.created_at.desc()).limit(50))
+        await session.scalars(select(AdminAction).order_by(AdminAction.created_at.desc()).limit(10))
     )
-    lines = ["<b>Последние действия администраторов</b>"]
+    admins = {item.id: item for item in await AdminRepository(session).list_all()}
+    lines = ["<b>Последние 10 действий администраторов</b>"]
     for action in actions:
+        admin = admins.get(action.admin_id)
+        admin_label = f"Администратор {admin.telegram_id}" if admin is not None else "Администратор"
+        description = human_action(action.action, action.metadata_json)
         lines.append(
-            f"{format_datetime(action.created_at, settings.default_timezone)} · "
-            f"{action.action} · {action.entity_type or '-'} {action.entity_id or ''}"
+            f"\n{format_datetime(action.created_at, settings.default_timezone)}\n"
+            f"{escape(admin_label)} — {escape(description)}"
         )
     await callback.message.answer(
-        "\n".join(lines) if actions else "Журнал пока пуст.",
-        reply_markup=back_to_admin_keyboard(),
+        "\n".join(lines) if actions else "Журнал действий пока пуст.",
+        reply_markup=admin_logs_keyboard(),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data == "adm:settings")
-async def admin_settings(callback: CallbackQuery, settings: Settings) -> None:
-    await callback.message.answer(
-        "<b>Настройки приложения</b>\n\n"
-        f"Режим: {settings.bot_mode}\n"
-        f"Часовой пояс: {settings.default_timezone}\n"
-        f"Активный пользователь: {settings.active_user_days} дней\n"
-        f"Новый пользователь: {settings.new_user_days} дней\n"
-        f"Размер пакета рассылки: {settings.broadcast_batch_size}\n"
-        f"Конкурентность рассылки: {settings.broadcast_concurrency}\n"
-        "Изменение системных параметров выполняется через переменные окружения Railway/.env.",
-        reply_markup=back_to_admin_keyboard(),
+@router.callback_query(F.data == "admlogs:xlsx")
+async def export_admin_logs(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "logs"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    content = await ExportService(session).admin_actions_xlsx()
+    await callback.message.answer_document(
+        BufferedInputFile(content, filename="admin_actions.xlsx")
     )
-    await callback.answer()
+    await callback.answer("Журнал выгружен")
 
 
 @router.callback_query(F.data == "adm:admins")

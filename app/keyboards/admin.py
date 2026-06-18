@@ -12,6 +12,11 @@ from app.texts.common import BROADCAST_STATUS_LABELS, EVENT_STATUS_LABELS, TICKE
 # Чтобы вернуть кнопку, измените значение на True.
 SHOW_FAQ_IN_ADMIN_MENU = False
 
+# Упрощённая карточка рассылки. Функционал не удалён из кода и может быть
+# возвращён сменой соответствующего значения на True.
+SHOW_BROADCAST_INLINE_BUTTONS = False
+SHOW_BROADCAST_CSV_EXPORTS = False
+
 
 def admin_menu() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
@@ -41,10 +46,7 @@ def admin_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Экспорт", callback_data="adm:export"),
                 InlineKeyboardButton(text="Журнал действий", callback_data="adm:logs"),
             ],
-            [
-                InlineKeyboardButton(text="Библиотека текстов", callback_data="adm:texts"),
-                InlineKeyboardButton(text="Настройки", callback_data="adm:settings"),
-            ],
+            [InlineKeyboardButton(text="Библиотека текстов", callback_data="adm:texts")],
             [InlineKeyboardButton(text="Управление админами", callback_data="adm:admins")],
         ]
     )
@@ -294,7 +296,8 @@ def audience_keyboard() -> InlineKeyboardMarkup:
 
 
 def broadcast_actions(item: Broadcast) -> InlineKeyboardMarkup:
-    rows = [
+    """Карточка рассылки без лишних кнопок и CSV-выгрузок."""
+    rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(text="Предпросмотр", callback_data=f"abcprev:{item.id}"),
             InlineKeyboardButton(text="Тест себе", callback_data=f"abctest:{item.id}"),
@@ -310,20 +313,12 @@ def broadcast_actions(item: Broadcast) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Добавить файл", callback_data=f"abcfile:{item.id}"),
         ],
         [
-            InlineKeyboardButton(text="Добавить кнопку", callback_data=f"abcbutton:{item.id}"),
-            InlineKeyboardButton(text="Файлы и кнопки", callback_data=f"abcm:{item.id}"),
-        ],
-        [
             InlineKeyboardButton(text="Отправить сейчас", callback_data=f"abcsend:{item.id}"),
             InlineKeyboardButton(text="Запланировать", callback_data=f"abcplan:{item.id}"),
         ],
         [InlineKeyboardButton(text="Статистика", callback_data=f"abcstat:{item.id}")],
         [
-            InlineKeyboardButton(text="Получатели CSV", callback_data=f"abcexp:{item.id}:csv"),
             InlineKeyboardButton(text="Получатели XLSX", callback_data=f"abcexp:{item.id}:xlsx"),
-        ],
-        [
-            InlineKeyboardButton(text="Сегмент CSV", callback_data=f"abcseg:{item.id}:csv"),
             InlineKeyboardButton(text="Сегмент XLSX", callback_data=f"abcseg:{item.id}:xlsx"),
         ],
         [
@@ -337,10 +332,14 @@ def broadcast_actions(item: Broadcast) -> InlineKeyboardMarkup:
 
 def broadcast_media_keyboard(item: Broadcast) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="Добавить файл", callback_data=f"abcfile:{item.id}"),
-        InlineKeyboardButton(text="Добавить кнопку", callback_data=f"abcbutton:{item.id}"),
-    )
+    if SHOW_BROADCAST_INLINE_BUTTONS:
+        builder.row(
+            InlineKeyboardButton(text="Добавить файл", callback_data=f"abcfile:{item.id}"),
+            InlineKeyboardButton(text="Добавить кнопку", callback_data=f"abcbutton:{item.id}"),
+        )
+    else:
+        builder.row(InlineKeyboardButton(text="Добавить файл", callback_data=f"abcfile:{item.id}"))
+
     for file in item.files:
         label = (file.file_name or file.file_type.value)[:22]
         builder.row(
@@ -348,14 +347,17 @@ def broadcast_media_keyboard(item: Broadcast) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="↓", callback_data=f"abfd:{file.id}"),
             InlineKeyboardButton(text=f"Удалить: {label}", callback_data=f"abfr:{file.id}"),
         )
-    for button in item.buttons:
-        builder.row(
-            InlineKeyboardButton(text="↑", callback_data=f"abbu:{button.id}"),
-            InlineKeyboardButton(text="↓", callback_data=f"abbd:{button.id}"),
-            InlineKeyboardButton(
-                text=f"Удалить кнопку: {button.text[:18]}", callback_data=f"abbr:{button.id}"
-            ),
-        )
+
+    if SHOW_BROADCAST_INLINE_BUTTONS:
+        for button in item.buttons:
+            builder.row(
+                InlineKeyboardButton(text="↑", callback_data=f"abbu:{button.id}"),
+                InlineKeyboardButton(text="↓", callback_data=f"abbd:{button.id}"),
+                InlineKeyboardButton(
+                    text=f"Удалить кнопку: {button.text[:18]}",
+                    callback_data=f"abbr:{button.id}",
+                ),
+            )
     builder.row(InlineKeyboardButton(text="Назад", callback_data=f"abc:{item.id}"))
     return builder.as_markup()
 
@@ -402,33 +404,44 @@ def support_admin_keyboard(items: list[SupportTicket]) -> InlineKeyboardMarkup:
 
 
 def support_ticket_actions(ticket: SupportTicket) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Данные пользователя", callback_data=f"astu:{ticket.id}"),
-                InlineKeyboardButton(text="Ответить", callback_data=f"astr:{ticket.id}"),
-            ],
-            [InlineKeyboardButton(text="Назад", callback_data="adm:support")],
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="Данные пользователя", callback_data=f"astu:{ticket.id}"),
+            InlineKeyboardButton(text="Ответить", callback_data=f"astr:{ticket.id}"),
         ]
-    )
+    ]
+    if ticket.status.value == "waiting_user":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Завершить разговор", callback_data=f"astfinish:{ticket.id}"
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="adm:support")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def export_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Пользователи CSV", callback_data="exp:users:csv"),
-                InlineKeyboardButton(text="Пользователи XLSX", callback_data="exp:users:xlsx"),
-            ],
-            [
-                InlineKeyboardButton(text="Обращения CSV", callback_data="exp:tickets:csv"),
-                InlineKeyboardButton(text="Обращения XLSX", callback_data="exp:tickets:xlsx"),
-            ],
-            [
-                InlineKeyboardButton(text="История участия CSV", callback_data="exp:history:csv"),
-                InlineKeyboardButton(text="История участия XLSX", callback_data="exp:history:xlsx"),
-            ],
+            [InlineKeyboardButton(text="Пользователи XLSX", callback_data="exp:users:xlsx")],
+            [InlineKeyboardButton(text="Обращения XLSX", callback_data="exp:tickets:xlsx")],
+            [InlineKeyboardButton(text="История участия XLSX", callback_data="exp:history:xlsx")],
             [InlineKeyboardButton(text="Главное меню", callback_data="adm:menu")],
+        ]
+    )
+
+
+def admin_logs_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Выгрузить все действия в Excel", callback_data="admlogs:xlsx"
+                )
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data="adm:menu")],
         ]
     )
 

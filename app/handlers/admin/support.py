@@ -104,6 +104,36 @@ async def support_user_data(
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("astfinish:"))
+async def support_finish(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    admin_model: Admin,
+) -> None:
+    await require_support(admin_model)
+    ticket_id = callback.data.split(":", 1)[1]
+    ticket = await SupportRepository(session).get(ticket_id)
+    if ticket is None:
+        await callback.answer("Обращение уже завершено", show_alert=True)
+        return
+    ticket_number = ticket.number
+    await AdminRepository(session).log_action(
+        admin_id=admin_model.id,
+        action="support_conversation_completed",
+        entity_type="support_ticket",
+        entity_id=ticket.id,
+        now=utcnow(),
+        metadata={"ticket_number": ticket_number},
+    )
+    await SupportRepository(session).delete_ticket(ticket.id)
+    items = await SupportRepository(session).list_open(0, 50)
+    await callback.message.answer(
+        f"Разговор по обращению №{ticket_number} завершён. Обращение удалено из списка.",
+        reply_markup=support_admin_keyboard(items),
+    )
+    await callback.answer("Разговор завершён", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("astr:"))
 async def support_reply_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(ticket_id=callback.data.split(":", 1)[1])
@@ -192,6 +222,10 @@ async def support_reply(
         entity_type="support_ticket",
         entity_id=ticket.id,
         now=utcnow(),
+        metadata={"ticket_number": ticket.number},
     )
     await state.clear()
-    await message.answer("Ответ отправлен пользователю.")
+    await message.answer(
+        "Ответ отправлен пользователю. Если вопрос закрыт, нажмите «Завершить разговор».",
+        reply_markup=support_ticket_actions(ticket),
+    )

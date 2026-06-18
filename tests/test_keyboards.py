@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from app.keyboards.admin import (
+    admin_menu,
     admins_keyboard,
     broadcast_actions,
     broadcast_media_keyboard,
@@ -183,3 +184,95 @@ def test_callback_data_respects_telegram_limit() -> None:
     ]
 
     assert max(length for markup in markups for length in callback_lengths(markup)) <= 64
+
+
+def test_faq_is_hidden_from_admin_menu() -> None:
+    markup = admin_menu()
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+
+    assert "FAQ" not in labels
+    assert "Статистика" in labels
+
+
+def test_support_ticket_actions_are_simplified() -> None:
+    now = datetime.now(UTC)
+    user = User(
+        id="d" * 36,
+        telegram_id=200,
+        registered_at=now,
+        last_activity_at=now,
+    )
+    ticket = SupportTicket(
+        id="e" * 36,
+        number=2,
+        user_id=user.id,
+        subject="Обращение",
+        status=TicketStatus.NEW,
+    )
+    markup = support_ticket_actions(ticket)
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+
+    assert labels == ["Данные пользователя", "Ответить", "Назад"]
+    assert "Назначить на себя" not in labels
+    assert "Закрыть" not in labels
+
+
+def test_broadcast_card_hides_unneeded_buttons() -> None:
+    broadcast = Broadcast(
+        id="f" * 36,
+        title="Рассылка",
+        text="Текст",
+        status=BroadcastStatus.DRAFT,
+        audience_filter={},
+    )
+    broadcast.files = []
+    broadcast.buttons = [
+        BroadcastButton(
+            id="1" * 36,
+            broadcast_id=broadcast.id,
+            text="Скрытая кнопка",
+            url="https://example.com",
+            position=0,
+        )
+    ]
+
+    actions = broadcast_actions(broadcast)
+    action_labels = [button.text for row in actions.inline_keyboard for button in row]
+    media = broadcast_media_keyboard(broadcast)
+    media_labels = [button.text for row in media.inline_keyboard for button in row]
+
+    assert "Добавить кнопку" not in action_labels
+    assert "Получатели CSV" not in action_labels
+    assert "Сегмент CSV" not in action_labels
+    assert "Получатели XLSX" in action_labels
+    assert "Сегмент XLSX" in action_labels
+    assert "Файлы" not in action_labels
+    assert "Добавить кнопку" not in media_labels
+    assert not any(label.startswith("Удалить кнопку:") for label in media_labels)
+
+
+def test_admin_menu_hides_settings_and_export_uses_only_xlsx() -> None:
+    from app.keyboards.admin import export_keyboard
+
+    menu_labels = [button.text for row in admin_menu().inline_keyboard for button in row]
+    export_labels = [button.text for row in export_keyboard().inline_keyboard for button in row]
+
+    assert "Настройки" not in menu_labels
+    assert all("CSV" not in label for label in export_labels)
+    assert "Пользователи XLSX" in export_labels
+    assert "Обращения XLSX" in export_labels
+    assert "История участия XLSX" in export_labels
+
+
+def test_support_finish_button_appears_after_admin_reply() -> None:
+    ticket = SupportTicket(
+        id="8" * 36,
+        number=7,
+        user_id="9" * 36,
+        subject="Вопрос",
+        status=TicketStatus.WAITING_USER,
+    )
+    labels = [
+        button.text for row in support_ticket_actions(ticket).inline_keyboard for button in row
+    ]
+    assert "Завершить разговор" in labels

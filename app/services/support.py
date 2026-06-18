@@ -53,16 +53,13 @@ class SupportService:
     ) -> SupportMessage:
         if ticket.status == TicketStatus.CLOSED:
             raise ValueError("Закрытое обращение нужно сначала открыть повторно")
-        message = await self.repository.add_message(
+        return await self.repository.add_message(
             ticket=ticket,
             text=text.strip()[:4096],
             now=now,
             author_type=MessageAuthorType.ADMIN,
             admin_id=admin.id,
         )
-        ticket.status = TicketStatus.CLOSED
-        ticket.closed_at = now
-        return message
 
     async def notify_admins(
         self,

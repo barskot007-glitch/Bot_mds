@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from aiogram.types import User as TelegramUser
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings
+from app.models.broadcast_support import SupportAttachment, SupportMessage, SupportTicket
 from app.models.content_audit import Admin
-from app.models.enums import AdminRole
+from app.models.enums import AdminRole, FileType
+from app.repositories.support import SupportRepository
 from app.services.permissions import PermissionService
 from app.services.support import SupportService
 from app.services.users import UserService, determine_age_group
@@ -33,6 +36,8 @@ async def test_user_registration(session: AsyncSession, settings: Settings) -> N
     await service.complete_registration(
         user,
         country="Армения",
+        phone="+374 99 123 456",
+        email="david@example.com",
         age=31,
         notifications_consent=True,
         data_processing_consent=True,
@@ -45,6 +50,8 @@ async def test_user_registration(session: AsyncSession, settings: Settings) -> N
     assert user.first_name == "Давид"
     assert user.last_name == "Иванов"
     assert user.participation_history == "Впервые"
+    assert user.phone == "+374 99 123 456"
+    assert user.email == "david@example.com"
     assert user.age_group == "25–34"
     assert user.source == "campaign-a"
 
@@ -119,3 +126,85 @@ async def test_crm_age_and_country_filters(session: AsyncSession, settings: Sett
     assert minors_count == 1
     assert selected_countries_count == 2
     assert await repository.list_countries() == ["Армения", "Россия"]
+
+
+async def test_admin_reply_waits_for_explicit_completion(
+    session: AsyncSession, settings: Settings
+) -> None:
+    user = await make_user(session, telegram_id=8201)
+    admin = Admin(telegram_id=8202, role=AdminRole.SUPPORT, is_active=True)
+    session.add(admin)
+    await session.flush()
+
+    service = SupportService(session, settings)
+    ticket = await service.create_ticket(
+        user=user, subject="Обращение", text="Вопрос", now=utcnow()
+    )
+    await service.reply_as_admin(ticket=ticket, admin=admin, text="Ответ", now=utcnow())
+
+    assert ticket.status.value == "waiting_user"
+    assert ticket.closed_at is None
+
+
+async def test_answered_ticket_is_deleted_with_messages_and_attachments(
+    session: AsyncSession, settings: Settings
+) -> None:
+    user = await make_user(session, telegram_id=8301)
+    admin = Admin(telegram_id=8302, role=AdminRole.SUPPORT, is_active=True)
+    session.add(admin)
+    await session.flush()
+
+    service = SupportService(session, settings)
+    ticket = await service.create_ticket(
+        user=user, subject="Обращение", text="Вопрос", now=utcnow()
+    )
+    first_message = await session.scalar(
+        select(SupportMessage).where(SupportMessage.ticket_id == ticket.id)
+    )
+    assert first_message is not None
+    session.add(
+        SupportAttachment(
+            message_id=first_message.id,
+            file_id="photo-file-id",
+            file_unique_id="photo-unique-id",
+            file_type=FileType.PHOTO,
+            position=0,
+        )
+    )
+    await service.reply_as_admin(ticket=ticket, admin=admin, text="Ответ", now=utcnow())
+    await session.flush()
+
+    await SupportRepository(session).delete_ticket(ticket.id)
+
+    ticket_count = await session.scalar(select(func.count()).select_from(SupportTicket))
+    message_count = await session.scalar(select(func.count()).select_from(SupportMessage))
+    attachment_count = await session.scalar(select(func.count()).select_from(SupportAttachment))
+    assert ticket_count == 0
+    assert message_count == 0
+    assert attachment_count == 0
+
+
+async def test_cleanup_removes_previously_closed_tickets(
+    session: AsyncSession, settings: Settings
+) -> None:
+    user = await make_user(session, telegram_id=8401)
+    admin = Admin(telegram_id=8402, role=AdminRole.SUPPORT, is_active=True)
+    session.add(admin)
+    await session.flush()
+
+    service = SupportService(session, settings)
+    ticket = await service.create_ticket(
+        user=user, subject="Старое обращение", text="Вопрос", now=utcnow()
+    )
+    await service.reply_as_admin(ticket=ticket, admin=admin, text="Ответ", now=utcnow())
+    from app.models.enums import TicketStatus
+
+    ticket.status = TicketStatus.CLOSED
+    ticket.closed_at = utcnow()
+    await session.flush()
+
+    deleted = await SupportRepository(session).delete_answered_tickets()
+
+    assert deleted == 1
+    remaining = await session.scalar(select(func.count()).select_from(SupportTicket))
+    assert remaining == 0
