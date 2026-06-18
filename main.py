@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.bot import create_dispatcher
 from app.config.logging import setup_logging
 from app.config.settings import Settings, get_settings
-from app.database.init import ensure_superadmins
+from app.database.init import ensure_superadmins, ensure_text_library
 from app.database.session import create_engine, create_session_factory
 from app.scheduler.manager import SchedulerManager
 from app.services.broadcasts import BroadcastSender
@@ -51,6 +51,7 @@ async def create_runtime() -> tuple[
     )
     async with session_factory() as session:
         await ensure_superadmins(session, settings.superadmin_ids)
+        await ensure_text_library(session)
     return settings, engine, session_factory, bot, dispatcher, scheduler
 
 

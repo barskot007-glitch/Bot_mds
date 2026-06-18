@@ -50,11 +50,21 @@ async def send_events_list(
     )
 
 
-@router.message(F.text == "Мероприятия")
+@router.message(F.text.in_({"Мероприятия", "📅 Мероприятия"}))
 async def events_menu(message: Message, session: AsyncSession, settings: Settings) -> None:
     await send_events_list(
         target=message, session=session, page=0, settings=settings, filter_key="all"
     )
+
+
+@router.callback_query(F.data == "menu:events")
+async def events_menu_callback(
+    callback: CallbackQuery, session: AsyncSession, settings: Settings
+) -> None:
+    await send_events_list(
+        target=callback.message, session=session, page=0, settings=settings, filter_key="all"
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("evflt:"))
@@ -227,3 +237,33 @@ async def participation_history(message: Message, session: AsyncSession, user_mo
         await message.answer("История участия пока пуста.")
         return
     await message.answer("История участия", reply_markup=registrations_keyboard(items))
+
+
+@router.callback_query(F.data == "menu:registrations")
+async def my_registrations_callback(
+    callback: CallbackQuery, session: AsyncSession, user_model: User
+) -> None:
+    items = await EventRepository(session).list_user_registrations(
+        user_id=user_model.id, future=True, now=utcnow(), offset=0, limit=30
+    )
+    if not items:
+        await callback.message.answer("У Вас нет предстоящих мероприятий.")
+    else:
+        await callback.message.answer(
+            "Ваши предстоящие мероприятия", reply_markup=registrations_keyboard(items)
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:history")
+async def participation_history_callback(
+    callback: CallbackQuery, session: AsyncSession, user_model: User
+) -> None:
+    items = await EventRepository(session).list_user_registrations(
+        user_id=user_model.id, future=False, now=utcnow(), offset=0, limit=30
+    )
+    if not items:
+        await callback.message.answer("История участия пока пуста.")
+    else:
+        await callback.message.answer("История участия", reply_markup=registrations_keyboard(items))
+    await callback.answer()

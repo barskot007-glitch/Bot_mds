@@ -3,8 +3,6 @@ from __future__ import annotations
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -15,24 +13,38 @@ from app.texts.common import EVENT_STATUS_LABELS, REGISTRATION_STATUS_LABELS
 from app.utils.time import format_datetime
 
 
-def main_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Мероприятия"), KeyboardButton(text="Мои регистрации")],
-            [KeyboardButton(text="История участия"), KeyboardButton(text="Поддержка")],
-            [KeyboardButton(text="FAQ"), KeyboardButton(text="Настройки")],
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Выберите раздел",
+def main_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 Мероприятия", callback_data="menu:events")],
+            [
+                InlineKeyboardButton(text="📡 М'МДС", url="https://t.me/MDS_molod"),
+                InlineKeyboardButton(text="📡 МДС", url="https://t.me/mosdoms"),
+            ],
+            [InlineKeyboardButton(text="📞 Связаться с нами", callback_data="menu:contact")],
+            [
+                InlineKeyboardButton(text="Мои регистрации", callback_data="menu:registrations"),
+                InlineKeyboardButton(text="История участия", callback_data="menu:history"),
+            ],
+            [
+                InlineKeyboardButton(text="FAQ", callback_data="menu:faq"),
+                InlineKeyboardButton(text="Настройки уведомлений", callback_data="menu:settings"),
+            ],
+        ]
     )
 
 
-def consent_keyboard(prefix: str) -> InlineKeyboardMarkup:
+def consent_keyboard(
+    prefix: str,
+    *,
+    yes_text: str = "Да",
+    no_text: str = "Нет",
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
-                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no"),
+                InlineKeyboardButton(text=yes_text, callback_data=f"{prefix}:yes"),
+                InlineKeyboardButton(text=no_text, callback_data=f"{prefix}:no"),
             ]
         ]
     )

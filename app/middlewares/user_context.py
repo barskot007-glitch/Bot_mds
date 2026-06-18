@@ -13,13 +13,11 @@ from app.utils.time import utcnow
 
 
 def extract_telegram_user(event: TelegramObject) -> Any:
-    """Получает Telegram-пользователя из Message, CallbackQuery или Update."""
-
     direct_user = getattr(event, "from_user", None)
     if direct_user is not None:
         return direct_user
 
-    update_fields = (
+    for field_name in (
         "message",
         "edited_message",
         "channel_post",
@@ -32,15 +30,11 @@ def extract_telegram_user(event: TelegramObject) -> Any:
         "my_chat_member",
         "chat_member",
         "chat_join_request",
-    )
-
-    for field_name in update_fields:
+    ):
         nested_event = getattr(event, field_name, None)
         nested_user = getattr(nested_event, "from_user", None)
-
         if nested_user is not None:
             return nested_user
-
     return None
 
 
@@ -56,12 +50,9 @@ class UserContextMiddleware(BaseMiddleware):
     ) -> Any:
         telegram_user = extract_telegram_user(event)
         session = data.get("session")
-
         if telegram_user is not None and isinstance(session, AsyncSession):
             user = await UserService(session, self.settings).ensure_user(
-                telegram_user,
-                now=utcnow(),
+                telegram_user, now=utcnow()
             )
             data["user_model"] = user
-
         return await handler(event, data)

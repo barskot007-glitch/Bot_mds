@@ -53,6 +53,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     notifications_consent: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     data_processing_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     registration_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    participation_history: Mapped[str | None] = mapped_column(Text)
 
     registrations: Mapped[list[Registration]] = relationship(back_populates="user")
     tickets: Mapped[list["SupportTicket"]] = relationship(back_populates="user")  # noqa: UP037

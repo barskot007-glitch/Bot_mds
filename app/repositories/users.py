@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.enums import RegistrationStatus
 from app.models.users_events import Registration, User
@@ -50,8 +51,9 @@ class UserRepository:
             await self.session.flush()
             return user
         user.username = username
-        user.first_name = first_name
-        user.last_name = last_name
+        if not user.registration_completed:
+            user.first_name = first_name
+            user.last_name = last_name
         user.language_code = language_code
         user.last_activity_at = now
         if source and not user.source:
@@ -62,12 +64,19 @@ class UserRepository:
         self,
         user: User,
         *,
+        first_name: str | None,
+        last_name: str | None,
         country: str,
         age: int,
         age_group: str,
+        participation_history: str | None,
         notifications_consent: bool,
         data_processing_consent: bool,
     ) -> User:
+        if first_name:
+            user.first_name = first_name
+        if last_name:
+            user.last_name = last_name
         user.country = country
         user.age = age
         user.age_group = age_group
@@ -75,6 +84,7 @@ class UserRepository:
         user.data_processing_consent = data_processing_consent
         user.is_subscribed = notifications_consent
         user.registration_completed = True
+        user.participation_history = participation_history
         await self.session.flush()
         return user
 
@@ -87,6 +97,20 @@ class UserRepository:
         await self.session.execute(
             update(User).where(User.id == user_id).values(is_blocked=blocked)
         )
+
+    async def search(self, query: str) -> list[User]:
+        normalized = query.strip().lstrip("@")
+        if not normalized:
+            return []
+        conditions: list[ColumnElement[bool]] = [User.username.ilike(f"%{normalized}%")]
+        if normalized.isdigit():
+            conditions.append(User.telegram_id == int(normalized))
+        from sqlalchemy import or_
+
+        result = await self.session.scalars(
+            select(User).where(or_(*conditions)).order_by(User.registered_at.desc()).limit(20)
+        )
+        return list(result)
 
     async def list_paginated(self, offset: int, limit: int) -> list[User]:
         result = await self.session.scalars(

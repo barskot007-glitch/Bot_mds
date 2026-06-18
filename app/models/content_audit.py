@@ -41,6 +41,21 @@ class FAQ(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     is_published: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class BotText(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
+    __tablename__ = "bot_texts"
+    __table_args__ = (
+        Index("ix_bot_texts_key_active_position", "text_key", "is_active", "position"),
+    )
+
+    text_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by_admin_id: Mapped[str | None] = mapped_column(
+        ForeignKey("admins.id", ondelete="SET NULL")
+    )
+
+
 class Admin(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "admins"
 

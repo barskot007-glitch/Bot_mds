@@ -1,7 +1,7 @@
 from aiogram import Router
 
 from app.filters.admin import AdminFilter
-from app.handlers.admin import broadcasts, common, events, faq, management, support
+from app.handlers.admin import broadcasts, common, events, faq, management, support, texts
 
 
 def build_admin_router() -> Router:
@@ -13,5 +13,6 @@ def build_admin_router() -> Router:
     router.include_router(broadcasts.router)
     router.include_router(support.router)
     router.include_router(faq.router)
+    router.include_router(texts.router)
     router.include_router(management.router)
     return router

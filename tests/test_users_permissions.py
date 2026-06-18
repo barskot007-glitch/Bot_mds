@@ -36,9 +36,15 @@ async def test_user_registration(session: AsyncSession, settings: Settings) -> N
         age=31,
         notifications_consent=True,
         data_processing_consent=True,
+        first_name="Давид",
+        last_name="Иванов",
+        participation_history="Впервые",
     )
     assert user.registration_completed is True
     assert user.country == "Армения"
+    assert user.first_name == "Давид"
+    assert user.last_name == "Иванов"
+    assert user.participation_history == "Впервые"
     assert user.age_group == "25–34"
     assert user.source == "campaign-a"
 

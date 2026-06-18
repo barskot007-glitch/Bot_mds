@@ -4,8 +4,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.models.broadcast_support import Broadcast, SupportTicket
-from app.models.content_audit import FAQ, Admin
-from app.models.users_events import Event, Registration
+from app.models.content_audit import FAQ, Admin, BotText
+from app.models.users_events import Event, Registration, User
 from app.texts.common import BROADCAST_STATUS_LABELS, EVENT_STATUS_LABELS, TICKET_STATUS_LABELS
 
 
@@ -29,9 +29,10 @@ def admin_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Журнал действий", callback_data="adm:logs"),
             ],
             [
-                InlineKeyboardButton(text="Администраторы", callback_data="adm:admins"),
+                InlineKeyboardButton(text="Библиотека текстов", callback_data="adm:texts"),
                 InlineKeyboardButton(text="Настройки", callback_data="adm:settings"),
             ],
+            [InlineKeyboardButton(text="Администраторы", callback_data="adm:admins")],
         ]
     )
 
@@ -430,5 +431,110 @@ def roles_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Support", callback_data="arole:support")],
             [InlineKeyboardButton(text="Superadmin", callback_data="arole:superadmin")],
             [InlineKeyboardButton(text="Отмена", callback_data="adm:cancel")],
+        ]
+    )
+
+
+def text_groups_keyboard(
+    groups: list[tuple[str, str, int, int]],
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for key, label, total, active in groups:
+        builder.button(
+            text=f"{label} · {active}/{total}",
+            callback_data=f"atxg:{key}",
+        )
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="Главное меню", callback_data="adm:menu"))
+    return builder.as_markup()
+
+
+def text_items_keyboard(text_key: str, items: list[BotText]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Добавить вариант", callback_data=f"atxnew:{text_key}"))
+    for number, item in enumerate(items, start=1):
+        marker = "вкл" if item.is_active else "выкл"
+        preview = item.content.replace("\n", " ")[:34]
+        builder.button(
+            text=f"{number}. {preview} · {marker}",
+            callback_data=f"atx:{item.id}",
+        )
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="К группам", callback_data="adm:texts"))
+    return builder.as_markup()
+
+
+def text_item_actions(item: BotText) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Редактировать", callback_data=f"atxedit:{item.id}")],
+            [
+                InlineKeyboardButton(
+                    text="Выключить" if item.is_active else "Включить",
+                    callback_data=f"atxtoggle:{item.id}",
+                ),
+                InlineKeyboardButton(text="Удалить", callback_data=f"atxdelq:{item.id}"),
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data=f"atxg:{item.text_key}")],
+        ]
+    )
+
+
+def text_delete_confirmation(item: BotText) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Подтвердить удаление", callback_data=f"atxdel:{item.id}")],
+            [InlineKeyboardButton(text="Отмена", callback_data=f"atx:{item.id}")],
+        ]
+    )
+
+
+def users_admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Найти пользователя", callback_data="ausr:search")],
+            [InlineKeyboardButton(text="Последние регистрации", callback_data="ausr:recent")],
+            [InlineKeyboardButton(text="Выгрузить базу", callback_data="adm:export")],
+            [InlineKeyboardButton(text="Главное меню", callback_data="adm:menu")],
+        ]
+    )
+
+
+def users_results_keyboard(users: list[User]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for user in users:
+        name = (
+            " ".join(part for part in [user.first_name, user.last_name] if part)
+            or user.username
+            or str(user.telegram_id)
+        )
+        builder.button(text=f"{name[:32]} · {user.telegram_id}", callback_data=f"ausr:{user.id}")
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="Назад", callback_data="adm:users"))
+    return builder.as_markup()
+
+
+def user_card_keyboard(user_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Имя", callback_data=f"auedit:{user_id}:first"),
+                InlineKeyboardButton(text="Фамилия", callback_data=f"auedit:{user_id}:last"),
+            ],
+            [
+                InlineKeyboardButton(text="Возраст", callback_data=f"auedit:{user_id}:age"),
+                InlineKeyboardButton(text="Страна", callback_data=f"auedit:{user_id}:country"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="История участия", callback_data=f"auedit:{user_id}:history"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Вкл/выкл уведомления", callback_data=f"autoggle:{user_id}"
+                )
+            ],
+            [InlineKeyboardButton(text="К пользователям", callback_data="adm:users")],
         ]
     )

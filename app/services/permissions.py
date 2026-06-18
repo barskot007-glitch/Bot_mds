@@ -19,9 +19,10 @@ PERMISSIONS: dict[AdminRole, frozenset[str]] = {
             "statistics",
             "export",
             "logs",
+            "texts",
         }
     ),
-    AdminRole.MODERATOR: frozenset({"events", "faq", "statistics"}),
+    AdminRole.MODERATOR: frozenset({"events", "faq", "statistics", "texts"}),
     AdminRole.SUPPORT: frozenset({"support"}),
 }
 

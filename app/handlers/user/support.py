@@ -13,6 +13,7 @@ from app.models.enums import FileType, TicketStatus
 from app.models.users_events import User
 from app.repositories.support import SupportRepository
 from app.services.support import SupportService
+from app.services.text_library import TextLibraryService
 from app.states.user import SupportStates
 from app.texts.common import TICKET_STATUS_LABELS
 from app.utils.time import utcnow
@@ -93,15 +94,33 @@ async def support_list_callback(
     await callback.answer()
 
 
+@router.callback_query(F.data == "menu:contact")
+async def contact_from_main_menu(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    await state.set_state(SupportStates.message)
+    await state.update_data(subject="Обращение из главного меню")
+    await callback.message.answer(
+        await TextLibraryService(session).get("support_message"),
+        parse_mode=None,
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "tkt:new")
-async def new_ticket(callback: CallbackQuery, state: FSMContext) -> None:
+async def new_ticket(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     await state.set_state(SupportStates.subject)
-    await callback.message.answer("Укажите тему обращения.")
+    await callback.message.answer(
+        await TextLibraryService(session).get("support_subject"),
+        parse_mode=None,
+    )
     await callback.answer()
 
 
 @router.message(SupportStates.subject, F.text)
-async def ticket_subject(message: Message, state: FSMContext) -> None:
+async def ticket_subject(message: Message, state: FSMContext, session: AsyncSession) -> None:
     subject = (message.text or "").strip()
     if not 3 <= len(subject) <= 255:
         await message.answer("Тема должна содержать от 3 до 255 символов.")
@@ -109,8 +128,8 @@ async def ticket_subject(message: Message, state: FSMContext) -> None:
     await state.update_data(subject=subject)
     await state.set_state(SupportStates.message)
     await message.answer(
-        "Опишите вопрос. Можно отправить текст, изображение или документ. "
-        "Ссылку можно указать в тексте."
+        await TextLibraryService(session).get("support_message"),
+        parse_mode=None,
     )
 
 

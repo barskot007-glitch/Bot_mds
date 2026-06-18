@@ -2,8 +2,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class RegistrationStates(StatesGroup):
-    country = State()
+    first_name = State()
+    last_name = State()
     age = State()
+    country = State()
+    participation_history = State()
     notifications_consent = State()
     data_consent = State()
 

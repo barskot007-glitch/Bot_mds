@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -9,11 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import Settings
 from app.keyboards.user import consent_keyboard, main_menu
 from app.models.users_events import User
+from app.services.text_library import TextLibraryService
 from app.services.users import UserService
 from app.states.user import RegistrationStates
-from app.texts.common import MAIN_MENU, WELCOME
 
 router = Router(name="user_registration")
+NAME_PATTERN = re.compile(r"^[A-Za-zА-Яа-яЁёÀ-ÖØ-öø-ÿ'’\- ]{2,128}$")
+
+
+def valid_name(value: str) -> bool:
+    return bool(NAME_PATTERN.fullmatch(value.strip()))
 
 
 @router.message(CommandStart())
@@ -27,29 +34,54 @@ async def start(
 ) -> None:
     if command.args and not user_model.source:
         user_model.source = command.args[:255]
+    texts = TextLibraryService(session)
     if user_model.registration_completed:
         await state.clear()
-        await message.answer(MAIN_MENU, reply_markup=main_menu())
+        await message.answer(
+            await texts.get("main_menu"), reply_markup=main_menu(), parse_mode=None
+        )
         return
-    await state.set_state(RegistrationStates.country)
+    await state.clear()
+    await state.set_state(RegistrationStates.first_name)
+    welcome = await texts.get("registration_welcome")
+    name_prompt = await texts.get("registration_name")
+    await message.answer(f"{welcome}\n\n{name_prompt}", parse_mode=None)
+
+
+@router.message(RegistrationStates.first_name, F.text)
+async def registration_first_name(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    first_name = (message.text or "").strip()
+    if not valid_name(first_name):
+        await message.answer(
+            "Напишите только имя: от 2 до 128 букв. Допустимы пробел, дефис и апостроф."
+        )
+        return
+    await state.update_data(first_name=first_name)
+    await state.set_state(RegistrationStates.last_name)
     await message.answer(
-        f"{WELCOME}\n\nУкажите страну проживания. Например: Армения.",
+        await TextLibraryService(session).get("registration_last_name"), parse_mode=None
     )
 
 
-@router.message(RegistrationStates.country, F.text)
-async def registration_country(message: Message, state: FSMContext) -> None:
-    country = (message.text or "").strip()
-    if len(country) < 2 or len(country) > 128:
-        await message.answer("Укажите корректное название страны длиной от 2 до 128 символов.")
+@router.message(RegistrationStates.last_name, F.text)
+async def registration_last_name(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    last_name = (message.text or "").strip()
+    if not valid_name(last_name):
+        await message.answer(
+            "Напишите только фамилию: от 2 до 128 букв. Допустимы пробел, дефис и апостроф."
+        )
         return
-    await state.update_data(country=country)
+    await state.update_data(last_name=last_name)
     await state.set_state(RegistrationStates.age)
-    await message.answer("Укажите ваш возраст числом от 5 до 120.")
+    await message.answer(await TextLibraryService(session).get("registration_age"), parse_mode=None)
 
 
 @router.message(RegistrationStates.age, F.text)
-async def registration_age(message: Message, state: FSMContext) -> None:
+async def registration_age(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
         age = int((message.text or "").strip())
         if age < 5 or age > 120:
@@ -58,21 +90,51 @@ async def registration_age(message: Message, state: FSMContext) -> None:
         await message.answer("Возраст должен быть целым числом от 5 до 120.")
         return
     await state.update_data(age=age)
+    await state.set_state(RegistrationStates.country)
+    await message.answer(
+        await TextLibraryService(session).get("registration_country"), parse_mode=None
+    )
+
+
+@router.message(RegistrationStates.country, F.text)
+async def registration_country(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    country = (message.text or "").strip()
+    if len(country) < 2 or len(country) > 128:
+        await message.answer("Укажите корректное название страны длиной от 2 до 128 символов.")
+        return
+    await state.update_data(country=country)
+    await state.set_state(RegistrationStates.participation_history)
+    await message.answer(
+        await TextLibraryService(session).get("registration_history"), parse_mode=None
+    )
+
+
+@router.message(RegistrationStates.participation_history, F.text)
+async def registration_history(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    history = (message.text or "").strip()
+    if len(history) < 2 or len(history) > 2000:
+        await message.answer("Ответ должен содержать от 2 до 2000 символов.")
+        return
+    await state.update_data(participation_history=history)
     await state.set_state(RegistrationStates.notifications_consent)
     await message.answer(
-        "Согласны получать уведомления о мероприятиях и рассылки?",
-        reply_markup=consent_keyboard("regnotify"),
+        await TextLibraryService(session).get("registration_notifications"),
+        reply_markup=consent_keyboard("regnotify", yes_text="Разрешаю", no_text="Запрещаю"),
+        parse_mode=None,
     )
 
 
 @router.callback_query(RegistrationStates.notifications_consent, F.data.startswith("regnotify:"))
-async def registration_notifications(callback: CallbackQuery, state: FSMContext) -> None:
+async def registration_notifications(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession
+) -> None:
     consent = callback.data == "regnotify:yes"
     await state.update_data(notifications_consent=consent)
     await state.set_state(RegistrationStates.data_consent)
     await callback.message.answer(
-        "Согласны на обработку данных, необходимых для работы бота? Без этого регистрация невозможна.",
-        reply_markup=consent_keyboard("regdata"),
+        await TextLibraryService(session).get("registration_data_consent"),
+        reply_markup=consent_keyboard("regdata", yes_text="Согласен", no_text="Не согласен"),
+        parse_mode=None,
     )
     await callback.answer()
 
@@ -92,13 +154,19 @@ async def registration_data_consent(
     data = await state.get_data()
     await UserService(session, settings).complete_registration(
         user_model,
+        first_name=str(data["first_name"]),
+        last_name=str(data["last_name"]),
         country=str(data["country"]),
         age=int(data["age"]),
+        participation_history=str(data["participation_history"]),
         notifications_consent=bool(data["notifications_consent"]),
         data_processing_consent=True,
     )
     await state.clear()
+    texts = TextLibraryService(session)
     await callback.message.answer(
-        "Регистрация завершена.\n\nГлавное меню", reply_markup=main_menu()
+        await texts.get("registration_complete"),
+        reply_markup=main_menu(),
+        parse_mode=None,
     )
     await callback.answer()

@@ -39,3 +39,13 @@ class AdminSupportStates(StatesGroup):
 class AdminManagementStates(StatesGroup):
     telegram_id = State()
     role = State()
+
+
+class AdminTextStates(StatesGroup):
+    content = State()
+    edit_content = State()
+
+
+class AdminUserStates(StatesGroup):
+    search = State()
+    edit_value = State()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
@@ -7,7 +9,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings
-from app.keyboards.admin import admins_keyboard, cancel_keyboard, export_keyboard, roles_keyboard
+from app.keyboards.admin import (
+    admins_keyboard,
+    cancel_keyboard,
+    export_keyboard,
+    roles_keyboard,
+    user_card_keyboard,
+    users_admin_keyboard,
+    users_results_keyboard,
+)
 from app.models.content_audit import Admin, AdminAction
 from app.models.enums import AdminRole
 from app.repositories.admins import AdminRepository
@@ -15,7 +25,8 @@ from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsService
 from app.services.export import ExportService
 from app.services.permissions import PermissionService
-from app.states.admin import AdminManagementStates
+from app.services.users import determine_age_group
+from app.states.admin import AdminManagementStates, AdminUserStates
 from app.utils.time import format_datetime, utcnow
 
 router = Router(name="admin_management")
@@ -62,7 +73,24 @@ async def dashboard(
 
 
 @router.callback_query(F.data == "adm:users")
-async def users_list(
+async def users_menu(
+    callback: CallbackQuery,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await callback.message.answer(
+        "<b>Пользователи</b>\n\n"
+        "Здесь можно найти участника, открыть его карточку, исправить данные "
+        "или выгрузить всю базу.",
+        reply_markup=users_admin_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ausr:recent")
+async def users_recent(
     callback: CallbackQuery,
     session: AsyncSession,
     admin_model: Admin,
@@ -71,15 +99,231 @@ async def users_list(
         await callback.answer("Недостаточно прав", show_alert=True)
         return
     users = await UserRepository(session).list_paginated(0, 30)
-    lines = ["<b>Последние пользователи</b>"]
-    for user in users:
-        name = user.username or user.first_name or "без имени"
-        lines.append(
-            f"{user.telegram_id} · {name} · {user.country or 'страна не указана'} · "
-            f"{'подписан' if user.is_subscribed else 'отписан'}"
-        )
-    await callback.message.answer("\n".join(lines) if users else "Пользователей нет.")
+    await callback.message.answer(
+        "Последние зарегистрированные пользователи",
+        reply_markup=users_results_keyboard(users),
+    )
     await callback.answer()
+
+
+@router.callback_query(F.data == "ausr:search")
+async def user_search_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await state.set_state(AdminUserStates.search)
+    await callback.message.answer(
+        "Введите числовой Telegram ID или username пользователя. "
+        "Username можно вводить с @ или без него.",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminUserStates.search, F.text)
+async def user_search_finish(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await state.clear()
+        await message.answer("Недостаточно прав.")
+        return
+    users = await UserRepository(session).search(message.text or "")
+    await state.clear()
+    if not users:
+        await message.answer("Пользователь не найден.", reply_markup=users_admin_keyboard())
+        return
+    await message.answer(
+        f"Найдено: {len(users)}",
+        reply_markup=users_results_keyboard(users),
+    )
+
+
+def user_card_text(user: object, settings: Settings) -> str:
+    from app.models.users_events import User
+
+    if not isinstance(user, User):
+        return "Пользователь не найден."
+    username = f"@{user.username}" if user.username else "не указан"
+    first_name = escape(user.first_name or "не указано")
+    last_name = escape(user.last_name or "не указана")
+    age_group = escape(user.age_group or "не указана")
+    country = escape(user.country or "не указана")
+    participation_history = escape(user.participation_history or "не указана")
+    return (
+        "<b>Карточка пользователя</b>\n\n"
+        f"Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"Username: {escape(username)}\n"
+        f"Имя: {first_name}\n"
+        f"Фамилия: {last_name}\n"
+        f"Возраст: {user.age if user.age is not None else 'не указан'}\n"
+        f"Возрастная группа: {age_group}\n"
+        f"Страна: {country}\n"
+        f"История участия: {participation_history}\n"
+        f"Регистрация: {format_datetime(user.registered_at, settings.default_timezone)}\n"
+        f"Последняя активность: "
+        f"{format_datetime(user.last_activity_at, settings.default_timezone)}\n"
+        f"Уведомления: {'включены' if user.is_subscribed else 'отключены'}\n"
+        f"Бот заблокирован: {'да' if user.is_blocked else 'нет'}\n"
+        f"Регистрация завершена: {'да' if user.registration_completed else 'нет'}"
+    )
+
+
+@router.callback_query(F.data.startswith("ausr:") & ~F.data.in_({"ausr:search", "ausr:recent"}))
+async def user_card(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    user_id = callback.data.split(":", 1)[1]
+    user = await UserRepository(session).get(user_id)
+    if user is None:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    await callback.message.answer(
+        user_card_text(user, settings),
+        reply_markup=user_card_keyboard(user.id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("auedit:"))
+async def user_edit_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    _, user_id, field = callback.data.split(":", 2)
+    user = await UserRepository(session).get(user_id)
+    if user is None:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    labels = {
+        "first": "имя",
+        "last": "фамилию",
+        "age": "возраст числом",
+        "country": "страну",
+        "history": "историю участия",
+    }
+    if field not in labels:
+        await callback.answer("Поле не поддерживается", show_alert=True)
+        return
+    await state.set_state(AdminUserStates.edit_value)
+    await state.update_data(user_id=user_id, field=field)
+    await callback.message.answer(
+        f"Введите новое значение: {labels[field]}.",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminUserStates.edit_value, F.text)
+async def user_edit_finish(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await state.clear()
+        await message.answer("Недостаточно прав.")
+        return
+    data = await state.get_data()
+    user = await UserRepository(session).get(str(data["user_id"]))
+    if user is None:
+        await state.clear()
+        await message.answer("Пользователь не найден.")
+        return
+    field = str(data["field"])
+    value = (message.text or "").strip()
+    if field in {"first", "last"}:
+        if not 2 <= len(value) <= 128:
+            await message.answer("Значение должно содержать от 2 до 128 символов.")
+            return
+        if field == "first":
+            user.first_name = value
+        else:
+            user.last_name = value
+    elif field == "country":
+        if not 2 <= len(value) <= 128:
+            await message.answer("Название страны должно содержать от 2 до 128 символов.")
+            return
+        user.country = value
+    elif field == "history":
+        if not 2 <= len(value) <= 2000:
+            await message.answer("История должна содержать от 2 до 2000 символов.")
+            return
+        user.participation_history = value
+    elif field == "age":
+        try:
+            age = int(value)
+            if age < 5 or age > 120:
+                raise ValueError
+        except ValueError:
+            await message.answer("Возраст должен быть целым числом от 5 до 120.")
+            return
+        user.age = age
+        user.age_group = determine_age_group(age, settings.age_groups)
+    await session.flush()
+    await AdminRepository(session).log_action(
+        admin_id=admin_model.id,
+        action="user_profile_updated",
+        entity_type="user",
+        entity_id=user.id,
+        now=utcnow(),
+        metadata={"field": field},
+    )
+    await state.clear()
+    await message.answer(
+        "Данные пользователя обновлены.\n\n" + user_card_text(user, settings),
+        reply_markup=user_card_keyboard(user.id),
+    )
+
+
+@router.callback_query(F.data.startswith("autoggle:"))
+async def user_subscription_toggle(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
+) -> None:
+    if not PermissionService.has_permission(admin_model, "users"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    user = await UserRepository(session).get(callback.data.split(":", 1)[1])
+    if user is None:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    user.is_subscribed = not user.is_subscribed
+    user.notifications_consent = user.is_subscribed
+    await AdminRepository(session).log_action(
+        admin_id=admin_model.id,
+        action="user_subscription_toggled",
+        entity_type="user",
+        entity_id=user.id,
+        now=utcnow(),
+        metadata={"is_subscribed": user.is_subscribed},
+    )
+    await callback.message.answer(
+        user_card_text(user, settings), reply_markup=user_card_keyboard(user.id)
+    )
+    await callback.answer("Статус уведомлений изменён", show_alert=True)
 
 
 @router.callback_query(F.data == "adm:export")

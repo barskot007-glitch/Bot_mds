@@ -67,15 +67,21 @@ class UserService:
         age: int,
         notifications_consent: bool,
         data_processing_consent: bool,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        participation_history: str | None = None,
     ) -> User:
         if not data_processing_consent:
             raise ValueError("Для регистрации необходимо согласие на обработку данных")
         age_group = determine_age_group(age, self.settings.age_groups)
         return await self.repository.complete_registration(
             user,
+            first_name=first_name.strip() if first_name else None,
+            last_name=last_name.strip() if last_name else None,
             country=country.strip(),
             age=validate_age(age),
             age_group=age_group,
+            participation_history=(participation_history or "").strip() or None,
             notifications_consent=notifications_consent,
             data_processing_consent=data_processing_consent,
         )
