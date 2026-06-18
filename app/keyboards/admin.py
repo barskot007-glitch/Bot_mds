@@ -17,7 +17,7 @@ def admin_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Рассылки", callback_data="adm:broadcasts"),
             ],
             [
-                InlineKeyboardButton(text="Пользователи", callback_data="adm:users"),
+                InlineKeyboardButton(text="База пользователей", callback_data="adm:users"),
                 InlineKeyboardButton(text="Обращения", callback_data="adm:support"),
             ],
             [
@@ -32,7 +32,7 @@ def admin_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Библиотека текстов", callback_data="adm:texts"),
                 InlineKeyboardButton(text="Настройки", callback_data="adm:settings"),
             ],
-            [InlineKeyboardButton(text="Администраторы", callback_data="adm:admins")],
+            [InlineKeyboardButton(text="Управление админами", callback_data="adm:admins")],
         ]
     )
 
@@ -56,18 +56,42 @@ def skip_cancel_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def events_keyboard(events: list[Event], page: int, has_next: bool) -> InlineKeyboardMarkup:
+def events_keyboard(
+    events: list[Event],
+    page: int,
+    has_next: bool,
+    status_filter: str = "all",
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Создать мероприятие", callback_data="aev:new")
+    builder.row(InlineKeyboardButton(text="Создать мероприятие", callback_data="aev:new"))
+    status_buttons = [
+        ("Все", "all"),
+        ("Черновики", "draft"),
+        ("Опубликованные", "published"),
+        ("Архив", "archived"),
+    ]
+    builder.row(
+        *[
+            InlineKeyboardButton(
+                text=("✓ " if status_filter == key else "") + label,
+                callback_data=f"aevs:{key}:0",
+            )
+            for label, key in status_buttons
+        ]
+    )
     for event in events:
         status = EVENT_STATUS_LABELS.get(event.status.value, event.status.value)
         builder.button(text=f"{event.title[:35]} · {status}", callback_data=f"aev:{event.id}")
     builder.adjust(1)
     nav: list[InlineKeyboardButton] = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"aevl:{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(text="Назад", callback_data=f"aevs:{status_filter}:{page - 1}")
+        )
     if has_next:
-        nav.append(InlineKeyboardButton(text="Далее", callback_data=f"aevl:{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(text="Далее", callback_data=f"aevs:{status_filter}:{page + 1}")
+        )
     if nav:
         builder.row(*nav)
     builder.row(InlineKeyboardButton(text="Главное меню", callback_data="adm:menu"))
@@ -76,12 +100,16 @@ def events_keyboard(events: list[Event], page: int, has_next: bool) -> InlineKey
 
 def event_actions(event: Event) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if event.status.value == "draft":
-        rows.append([InlineKeyboardButton(text="Опубликовать", callback_data=f"aevpub:{event.id}")])
+    if event.status.value in {"draft", "archived"}:
+        rows.append(
+            [InlineKeyboardButton(text="Опубликовать", callback_data=f"aevpubq:{event.id}")]
+        )
+    elif event.status.value in {"published", "registration_closed"}:
+        rows.append([InlineKeyboardButton(text="Скрыть", callback_data=f"aevhideq:{event.id}")])
     rows.append(
         [
             InlineKeyboardButton(text="Редактировать", callback_data=f"aevedit:{event.id}"),
-            InlineKeyboardButton(text="Файлы и ссылки", callback_data=f"aevmedia:{event.id}"),
+            InlineKeyboardButton(text="Фото и ссылки", callback_data=f"aevmedia:{event.id}"),
         ]
     )
     rows.append(
@@ -106,14 +134,8 @@ def event_actions(event: Event) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Сообщение участникам", callback_data=f"aevmsg:{event.id}"),
         ]
     )
-    rows.append(
-        [
-            InlineKeyboardButton(text="Архивировать", callback_data=f"aevarc:{event.id}"),
-            InlineKeyboardButton(text="Отменить событие", callback_data=f"aevcan:{event.id}"),
-        ]
-    )
     rows.append([InlineKeyboardButton(text="Удалить", callback_data=f"aevdel:{event.id}")])
-    rows.append([InlineKeyboardButton(text="К списку", callback_data="adm:events")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="adm:events")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -411,13 +433,16 @@ def export_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def admins_keyboard(admins: list[Admin]) -> InlineKeyboardMarkup:
+def admins_keyboard(
+    admins: list[Admin],
+    names: dict[int, str] | None = None,
+) -> InlineKeyboardMarkup:
+    names = names or {}
     builder = InlineKeyboardBuilder()
     builder.button(text="Добавить администратора", callback_data="aadmin:new")
     for item in admins:
-        builder.button(
-            text=f"{item.telegram_id} · {item.role.value}", callback_data=f"aadmin:{item.id}"
-        )
+        name = names.get(item.telegram_id, "Без имени")
+        builder.button(text=f"{name[:22]} · {item.telegram_id}", callback_data=f"aadmin:{item.id}")
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="Главное меню", callback_data="adm:menu"))
     return builder.as_markup()
@@ -493,8 +518,7 @@ def users_admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Найти пользователя", callback_data="ausr:search")],
-            [InlineKeyboardButton(text="Последние регистрации", callback_data="ausr:recent")],
-            [InlineKeyboardButton(text="Выгрузить базу", callback_data="adm:export")],
+            [InlineKeyboardButton(text="Вернуться к фильтрам", callback_data="adm:users")],
             [InlineKeyboardButton(text="Главное меню", callback_data="adm:menu")],
         ]
     )
@@ -536,5 +560,124 @@ def user_card_keyboard(user_id: str) -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton(text="К пользователям", callback_data="adm:users")],
+        ]
+    )
+
+
+def back_to_admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="adm:menu")]]
+    )
+
+
+def crm_filters_keyboard(
+    *,
+    age_mode: str = "all",
+    selected_countries: int = 0,
+) -> InlineKeyboardMarkup:
+    def mark(value: str, label: str) -> str:
+        return f"✓ {label}" if age_mode == value else label
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Поиск по ID или username", callback_data="ausr:search")],
+            [
+                InlineKeyboardButton(text=mark("all", "Все"), callback_data="crm:age:all"),
+                InlineKeyboardButton(
+                    text=mark("under18", "Младше 18"), callback_data="crm:age:under18"
+                ),
+                InlineKeyboardButton(
+                    text=mark("adult", "18 и старше"), callback_data="crm:age:adult"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Страны ({selected_countries})", callback_data="crm:countries"
+                )
+            ],
+            [InlineKeyboardButton(text="Показать пользователей", callback_data="crm:apply")],
+            [InlineKeyboardButton(text="Выгрузить в Excel", callback_data="crm:export")],
+            [InlineKeyboardButton(text="Главное меню", callback_data="adm:menu")],
+        ]
+    )
+
+
+def country_multiselect_keyboard(
+    countries: list[str],
+    selected: set[str],
+    *,
+    prefix: str,
+    done_callback: str,
+    clear_callback: str,
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for index, country in enumerate(countries[:50]):
+        marker = "☑" if country in selected else "☐"
+        builder.button(text=f"{marker} {country[:42]}", callback_data=f"{prefix}:{index}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="Очистить выбор", callback_data=clear_callback))
+    builder.row(InlineKeyboardButton(text="Готово", callback_data=done_callback))
+    return builder.as_markup()
+
+
+def crm_export_scope_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Полная база", callback_data="crmexp:full")],
+            [InlineKeyboardButton(text="По текущему фильтру", callback_data="crmexp:filtered")],
+            [InlineKeyboardButton(text="Назад", callback_data="adm:users")],
+        ]
+    )
+
+
+def broadcast_segment_keyboard(
+    *,
+    age_mode: str = "all",
+    selected_countries: int = 0,
+) -> InlineKeyboardMarkup:
+    def mark(value: str, label: str) -> str:
+        return f"✓ {label}" if age_mode == value else label
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=mark("all", "Все"), callback_data="bcrm:age:all"),
+                InlineKeyboardButton(
+                    text=mark("under18", "Младше 18"), callback_data="bcrm:age:under18"
+                ),
+                InlineKeyboardButton(
+                    text=mark("adult", "18 и старше"), callback_data="bcrm:age:adult"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Страны ({selected_countries})", callback_data="bcrm:countries"
+                )
+            ],
+            [InlineKeyboardButton(text="Продолжить", callback_data="bcrm:done")],
+            [InlineKeyboardButton(text="Отмена", callback_data="adm:cancel")],
+        ]
+    )
+
+
+def photo_collection_keyboard(*, done_callback: str, count: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Готово, фото: {count}", callback_data=done_callback)],
+            [InlineKeyboardButton(text="Отмена", callback_data="adm:cancel")],
+        ]
+    )
+
+
+def confirm_action_keyboard(
+    *,
+    confirm_text: str,
+    confirm_callback: str,
+    cancel_callback: str,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=confirm_text, callback_data=confirm_callback)],
+            [InlineKeyboardButton(text="Отмена", callback_data=cancel_callback)],
         ]
     )

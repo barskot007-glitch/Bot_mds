@@ -82,3 +82,40 @@ def test_railway_database_url_is_normalized() -> None:
         APP_ENV="production",
     )
     assert settings.database_url == "postgresql+asyncpg://user:p%40ss@db.internal:5432/app"
+
+
+async def test_crm_age_and_country_filters(session: AsyncSession, settings: Settings) -> None:
+    from app.repositories.users import UserRepository
+
+    minor = await make_user(session, telegram_id=8101, country="Армения")
+    minor.age = 17
+    minor.age_group = "до 18"
+    adult_armenia = await make_user(session, telegram_id=8102, country="Армения")
+    adult_armenia.age = 24
+    adult_armenia.age_group = "18–24"
+    adult_russia = await make_user(session, telegram_id=8103, country="Россия")
+    adult_russia.age = 31
+    adult_russia.age_group = "25–34"
+    await session.flush()
+
+    repository = UserRepository(session)
+    minors_count = await repository.count_audience(
+        {"subscribed_only": False, "age_max": 17},
+        now=utcnow(),
+        active_days=settings.active_user_days,
+        new_days=settings.new_user_days,
+    )
+    selected_countries_count = await repository.count_audience(
+        {
+            "subscribed_only": False,
+            "age_min": 18,
+            "countries": ["Армения", "Россия"],
+        },
+        now=utcnow(),
+        active_days=settings.active_user_days,
+        new_days=settings.new_user_days,
+    )
+
+    assert minors_count == 1
+    assert selected_countries_count == 2
+    assert await repository.list_countries() == ["Армения", "Россия"]

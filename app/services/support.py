@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from aiogram import Bot
+from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings
@@ -61,15 +62,33 @@ class SupportService:
             admin_id=admin.id,
         )
 
-    async def notify_admins(self, bot: Bot, ticket: SupportTicket) -> None:
-        text = f"Новое обращение №{ticket.number}\nТема: {ticket.subject}"
-        sent: set[int] = set()
+    async def notify_admins(
+        self,
+        bot: Bot,
+        ticket: SupportTicket,
+        user: User,
+        source_message: Message | None = None,
+    ) -> None:
+        username = f"@{user.username}" if user.username else "не указан"
+        name = " ".join(part for part in [user.first_name, user.last_name] if part) or "не указано"
+        text = (
+            "Новое сообщение в поддержку\n\n"
+            f"Обращение №{ticket.number}\n"
+            f"Пользователь: {name}\n"
+            f"Telegram ID: {user.telegram_id}\n"
+            f"Username: {username}\n\n"
+            "Ответить можно через /admin → Обращения."
+        )
+        recipients: set[int] = set(self.settings.superadmin_ids)
         if self.settings.admin_chat_id:
-            await bot.send_message(self.settings.admin_chat_id, text)
-            sent.add(self.settings.admin_chat_id)
+            recipients.add(self.settings.admin_chat_id)
         for admin in await AdminRepository(self.session).list_all():
-            if admin.telegram_id not in sent and admin.is_active:
-                try:
-                    await bot.send_message(admin.telegram_id, text)
-                except Exception:
-                    continue
+            if admin.is_active:
+                recipients.add(admin.telegram_id)
+        for telegram_id in recipients:
+            try:
+                await bot.send_message(telegram_id, text)
+                if source_message is not None:
+                    await source_message.copy_to(telegram_id)
+            except Exception:
+                continue

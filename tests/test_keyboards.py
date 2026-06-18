@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from app.keyboards.admin import (
     admins_keyboard,
@@ -53,7 +53,9 @@ from app.models.enums import (
 from app.models.users_events import Event, EventFile, EventLink, Registration, User
 
 
-def callback_lengths(markup: InlineKeyboardMarkup) -> list[int]:
+def callback_lengths(markup: InlineKeyboardMarkup | ReplyKeyboardMarkup) -> list[int]:
+    if isinstance(markup, ReplyKeyboardMarkup):
+        return []
     return [
         len(button.callback_data.encode("utf-8"))
         for row in markup.inline_keyboard

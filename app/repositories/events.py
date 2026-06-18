@@ -66,13 +66,17 @@ class EventRepository:
         result = await self.session.scalars(query.offset(offset).limit(limit))
         return list(result)
 
-    async def list_admin(self, offset: int, limit: int) -> list[Event]:
+    async def list_admin(
+        self,
+        offset: int,
+        limit: int,
+        status: EventStatus | None = None,
+    ) -> list[Event]:
+        query = select(Event).where(Event.deleted_at.is_(None))
+        if status is not None:
+            query = query.where(Event.status == status)
         result = await self.session.scalars(
-            select(Event)
-            .where(Event.deleted_at.is_(None))
-            .order_by(Event.created_at.desc())
-            .offset(offset)
-            .limit(limit)
+            query.order_by(Event.created_at.desc()).offset(offset).limit(limit)
         )
         return list(result)
 

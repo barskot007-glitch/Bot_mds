@@ -137,6 +137,12 @@ class UserRepository:
         age_groups = filters.get("age_groups") or []
         if age_groups:
             query = query.where(User.age_group.in_(age_groups))
+        age_min = filters.get("age_min")
+        age_max = filters.get("age_max")
+        if age_min is not None:
+            query = query.where(User.age >= int(age_min))
+        if age_max is not None:
+            query = query.where(User.age <= int(age_max))
         registered_from = filters.get("registered_from")
         registered_to = filters.get("registered_to")
         if registered_from:
@@ -195,6 +201,19 @@ class UserRepository:
         query = self.audience_query(filters, now=now, active_days=active_days, new_days=new_days)
         result = await self.session.scalars(query.offset(offset).limit(limit))
         return list(result)
+
+    async def list_countries(self) -> list[str]:
+        result = await self.session.scalars(
+            select(User.country)
+            .where(
+                User.registration_completed.is_(True),
+                User.country.is_not(None),
+                User.country != "",
+            )
+            .distinct()
+            .order_by(User.country.asc())
+        )
+        return [str(country) for country in result if country]
 
     async def statistics(self, *, now: datetime, active_days: int, new_days: int) -> dict[str, int]:
         active_since = now - timedelta(days=active_days)

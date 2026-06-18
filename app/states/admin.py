@@ -12,6 +12,8 @@ class AdminEventStates(StatesGroup):
     address = State()
     capacity = State()
     details_url = State()
+    photos = State()
+    reminder_days = State()
     confirm = State()
     edit_value = State()
 
@@ -20,6 +22,8 @@ class AdminBroadcastStates(StatesGroup):
     title = State()
     text = State()
     audience = State()
+    photos = State()
+    preview = State()
     schedule = State()
     confirm = State()
     edit_value = State()
@@ -39,6 +43,8 @@ class AdminSupportStates(StatesGroup):
 class AdminManagementStates(StatesGroup):
     telegram_id = State()
     role = State()
+    confirm_add = State()
+    confirm_delete = State()
 
 
 class AdminTextStates(StatesGroup):
@@ -48,4 +54,5 @@ class AdminTextStates(StatesGroup):
 
 class AdminUserStates(StatesGroup):
     search = State()
+    filters = State()
     edit_value = State()

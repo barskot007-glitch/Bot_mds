@@ -18,12 +18,14 @@ from app.config.settings import Settings
 from app.filters.admin import AdminFilter
 from app.keyboards.admin import (
     cancel_keyboard,
+    confirm_action_keyboard,
     confirm_delete,
     event_actions,
     event_edit_fields,
     event_media_keyboard,
     events_keyboard,
     participants_keyboard,
+    photo_collection_keyboard,
     skip_cancel_keyboard,
 )
 from app.keyboards.user import event_card_text
@@ -90,7 +92,7 @@ async def show_event_card(
 
 
 @router.callback_query(F.data == "adm:events")
-@router.callback_query(F.data.startswith("aevl:"))
+@router.callback_query(F.data.startswith("aevs:"))
 async def list_events(
     callback: CallbackQuery,
     session: AsyncSession,
@@ -98,11 +100,27 @@ async def list_events(
     admin_model: Admin,
 ) -> None:
     await require_events(session, settings, admin_model)
-    page = int(callback.data.split(":")[1]) if callback.data.startswith("aevl:") else 0
-    items = await EventRepository(session).list_admin(page * PAGE_SIZE, PAGE_SIZE + 1)
+    status_filter = "all"
+    page = 0
+    if callback.data.startswith("aevs:"):
+        _, status_filter, raw_page = callback.data.split(":", 2)
+        page = int(raw_page)
+    status = None
+    if status_filter in {"draft", "published", "archived"}:
+        status = EventStatus(status_filter)
+    items = await EventRepository(session).list_admin(
+        page * PAGE_SIZE,
+        PAGE_SIZE + 1,
+        status=status,
+    )
     await callback.message.answer(
-        "Управление мероприятиями",
-        reply_markup=events_keyboard(items[:PAGE_SIZE], page, len(items) > PAGE_SIZE),
+        "<b>Мероприятия</b>\n\nВыберите статус или создайте новое событие.",
+        reply_markup=events_keyboard(
+            items[:PAGE_SIZE],
+            page,
+            len(items) > PAGE_SIZE,
+            status_filter,
+        ),
     )
     await callback.answer()
 
@@ -289,19 +307,103 @@ async def skip_capacity(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(AdminEventStates.details_url, F.text)
-async def create_event_url(message: Message, state: FSMContext, settings: Settings) -> None:
+async def create_event_url(message: Message, state: FSMContext) -> None:
     try:
         url = validate_url(message.text or "")
     except ValueError as exc:
         await message.answer(str(exc))
         return
     await state.update_data(details_url=url)
-    await show_create_preview(message, state, settings)
+    await ask_event_photos(message, state)
 
 
 @router.callback_query(AdminEventStates.details_url, F.data == "adm:skip")
-async def skip_url(callback: CallbackQuery, state: FSMContext, settings: Settings) -> None:
+async def skip_url(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(details_url=None)
+    await ask_event_photos(callback.message, state)
+    await callback.answer()
+
+
+async def ask_event_photos(message: Message, state: FSMContext) -> None:
+    await state.update_data(event_photos=[])
+    await state.set_state(AdminEventStates.photos)
+    await message.answer(
+        "Прикрепите одну или несколько фотографий мероприятия. "
+        "Когда закончите, нажмите «Готово». Фото можно не добавлять.",
+        reply_markup=photo_collection_keyboard(
+            done_callback="aevwiz:photos_done",
+            count=0,
+        ),
+    )
+
+
+@router.message(AdminEventStates.photos, F.photo)
+async def create_event_photo(
+    message: Message,
+    state: FSMContext,
+    settings: Settings,
+) -> None:
+    data = await state.get_data()
+    photos = list(data.get("event_photos") or [])
+    if len(photos) >= 10:
+        await message.answer("Можно добавить не более 10 фотографий.")
+        return
+    photo = message.photo[-1]
+    if photo.file_size and photo.file_size > settings.max_upload_bytes:
+        await message.answer("Фотография превышает допустимый размер.")
+        return
+    photos.append(
+        {
+            "file_id": photo.file_id,
+            "file_unique_id": photo.file_unique_id,
+            "size": photo.file_size,
+            "caption": message.caption,
+        }
+    )
+    await state.update_data(event_photos=photos)
+    await message.answer(
+        f"Фото добавлено. Всего: {len(photos)}.",
+        reply_markup=photo_collection_keyboard(
+            done_callback="aevwiz:photos_done",
+            count=len(photos),
+        ),
+    )
+
+
+@router.callback_query(AdminEventStates.photos, F.data == "aevwiz:photos_done")
+async def create_event_photos_done(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AdminEventStates.reminder_days)
+    await callback.message.answer(
+        "За сколько дней до начала напомнить участникам? Введите число или нажмите «Пропустить».",
+        reply_markup=skip_cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminEventStates.reminder_days, F.text)
+async def create_event_reminder_days(
+    message: Message,
+    state: FSMContext,
+    settings: Settings,
+) -> None:
+    try:
+        days = int(message.text or "")
+        if not 1 <= days <= 365:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите целое число от 1 до 365.")
+        return
+    await state.update_data(reminder_days=days)
+    await show_create_preview(message, state, settings)
+
+
+@router.callback_query(AdminEventStates.reminder_days, F.data == "adm:skip")
+async def skip_event_reminder(
+    callback: CallbackQuery,
+    state: FSMContext,
+    settings: Settings,
+) -> None:
+    await state.update_data(reminder_days=None)
     await show_create_preview(callback.message, state, settings)
     await callback.answer()
 
@@ -309,16 +411,19 @@ async def skip_url(callback: CallbackQuery, state: FSMContext, settings: Setting
 async def show_create_preview(message: Message, state: FSMContext, settings: Settings) -> None:
     data = await state.get_data()
     await state.set_state(AdminEventStates.confirm)
+    reminder_text = (
+        f"за {data.get('reminder_days')} дн." if data.get("reminder_days") else "не настроено"
+    )
     text = (
         f"<b>Предпросмотр</b>\n\n"
         f"{data['title']}\n{data['full_description']}\n\n"
         f"Начало: {format_datetime(parse_local_datetime_from_iso(str(data['start_at'])), settings.default_timezone)}\n"
         f"Окончание: {format_datetime(parse_local_datetime_from_iso(str(data['end_at'])) if data.get('end_at') else None, settings.default_timezone)}\n"
         f"Место: {', '.join(str(data.get(key)) for key in ('country', 'city', 'address') if data.get(key)) or 'не указано'}\n"
-        f"Лимит: {data.get('capacity') or 'без лимита'}"
+        f"Лимит: {data.get('capacity') or 'без лимита'}\n"
+        f"Фотографий: {len(data.get('event_photos') or [])}\n"
+        f"Напоминание: {reminder_text}"
     )
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Сохранить черновик", callback_data="aevsave:draft")],
@@ -357,6 +462,29 @@ async def save_created_event(
         status=EventStatus.DRAFT,
         author_admin_id=admin_model.id,
     )
+    for position, photo in enumerate(list(data.get("event_photos") or [])):
+        session.add(
+            EventFile(
+                event_id=event.id,
+                file_id=str(photo["file_id"]),
+                file_unique_id=str(photo["file_unique_id"]),
+                file_type=FileType.PHOTO,
+                file_name=None,
+                mime_type="image/jpeg",
+                size=photo.get("size"),
+                caption=photo.get("caption"),
+                position=position,
+            )
+        )
+    reminder_days = data.get("reminder_days")
+    if reminder_days:
+        session.add(
+            EventReminder(
+                event_id=event.id,
+                minutes_before=int(reminder_days) * 24 * 60,
+                enabled=True,
+            )
+        )
     if callback.data.endswith("published"):
         await EventService(session).publish(event, utcnow())
     await AdminRepository(session).log_action(
@@ -384,9 +512,26 @@ async def event_card(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("aevpub:"))
+@router.callback_query(F.data.startswith("aevpubq:"))
+async def publish_event_question(callback: CallbackQuery) -> None:
+    event_id = callback.data.split(":", 1)[1]
+    await callback.message.answer(
+        "Опубликовать мероприятие и показать его пользователям?",
+        reply_markup=confirm_action_keyboard(
+            confirm_text="Подтвердить публикацию",
+            confirm_callback=f"aevpubok:{event_id}",
+            cancel_callback=f"aev:{event_id}",
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("aevpubok:"))
 async def publish_event(
-    callback: CallbackQuery, session: AsyncSession, settings: Settings, admin_model: Admin
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
 ) -> None:
     event = await EventRepository(session).get(callback.data.split(":", 1)[1])
     if event is None:
@@ -400,7 +545,47 @@ async def publish_event(
         entity_id=event.id,
         now=utcnow(),
     )
+    await callback.message.answer("Мероприятие опубликовано.")
+    await show_event_card(callback.message, session, settings, event.id)
     await callback.answer("Опубликовано", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("aevhideq:"))
+async def hide_event_question(callback: CallbackQuery) -> None:
+    event_id = callback.data.split(":", 1)[1]
+    await callback.message.answer(
+        "Скрыть мероприятие из пользовательской ленты и переместить в архив?",
+        reply_markup=confirm_action_keyboard(
+            confirm_text="Подтвердить скрытие",
+            confirm_callback=f"aevhideok:{event_id}",
+            cancel_callback=f"aev:{event_id}",
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("aevhideok:"))
+async def hide_event(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
+) -> None:
+    event = await EventRepository(session).get(callback.data.split(":", 1)[1])
+    if event is None:
+        await callback.answer("Не найдено", show_alert=True)
+        return
+    await EventService(session).archive(event)
+    await AdminRepository(session).log_action(
+        admin_id=admin_model.id,
+        action="event_hidden",
+        entity_type="event",
+        entity_id=event.id,
+        now=utcnow(),
+    )
+    await callback.message.answer("Мероприятие скрыто и перемещено в архив.")
+    await show_event_card(callback.message, session, settings, event.id)
+    await callback.answer("Скрыто", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("aevreg:"))
@@ -575,12 +760,13 @@ async def edit_event_value(
         return
     if action == "reminder":
         try:
-            minutes = int(value)
-            if minutes < 1:
+            days = int(value)
+            if not 1 <= days <= 365:
                 raise ValueError
         except ValueError:
-            await message.answer("Введите количество минут больше нуля.")
+            await message.answer("Введите количество дней от 1 до 365.")
             return
+        minutes = days * 24 * 60
         existing = await session.scalar(
             select(EventReminder).where(
                 EventReminder.event_id == event.id, EventReminder.minutes_before == minutes
@@ -823,7 +1009,7 @@ async def event_stats(callback: CallbackQuery, session: AsyncSession, settings: 
 async def event_reminder_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(action="reminder", event_id=callback.data.split(":", 1)[1])
     await state.set_state(AdminEventStates.edit_value)
-    await callback.message.answer("За сколько минут до начала отправить напоминание?")
+    await callback.message.answer("За сколько дней до начала отправить напоминание?")
     await callback.answer()
 
 

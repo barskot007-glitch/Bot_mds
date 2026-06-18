@@ -325,6 +325,49 @@ class BroadcastSender:
             )
             return message.message_id
 
+        photos_only = all(item.file_type.value == "photo" for item in files)
+        if len(files) > 1 and photos_only:
+            from aiogram.types import (
+                InputMediaAudio,
+                InputMediaDocument,
+                InputMediaLivePhoto,
+                InputMediaPhoto,
+                InputMediaVideo,
+            )
+
+            caption = broadcast.text if len(broadcast.text) <= 1024 else None
+            media: list[
+                InputMediaAudio
+                | InputMediaDocument
+                | InputMediaLivePhoto
+                | InputMediaPhoto
+                | InputMediaVideo
+            ] = [
+                InputMediaPhoto(
+                    media=item.file_id,
+                    caption=caption if index == 0 else None,
+                    parse_mode=broadcast.parse_mode if index == 0 else None,
+                )
+                for index, item in enumerate(files[:10])
+            ]
+            messages = await self.bot.send_media_group(telegram_id, media=media)
+            if caption is None:
+                text_message = await self.bot.send_message(
+                    telegram_id,
+                    broadcast.text,
+                    parse_mode=broadcast.parse_mode,
+                    reply_markup=keyboard,
+                )
+                return text_message.message_id
+            if keyboard is not None:
+                button_message = await self.bot.send_message(
+                    telegram_id,
+                    "Выберите действие:",
+                    reply_markup=keyboard,
+                )
+                return button_message.message_id
+            return messages[0].message_id
+
         first = files[0]
         caption = broadcast.text if len(broadcast.text) <= 1024 else None
         media_keyboard = keyboard if caption is not None else None

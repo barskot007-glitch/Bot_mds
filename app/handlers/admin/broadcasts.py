@@ -18,9 +18,12 @@ from app.keyboards.admin import (
     audience_keyboard,
     broadcast_actions,
     broadcast_media_keyboard,
+    broadcast_segment_keyboard,
     broadcasts_keyboard,
     cancel_keyboard,
     confirm_delete,
+    country_multiselect_keyboard,
+    photo_collection_keyboard,
 )
 from app.models.broadcast_support import BroadcastButton, BroadcastFile
 from app.models.content_audit import Admin
@@ -28,6 +31,7 @@ from app.models.enums import BroadcastStatus, FileType
 from app.repositories.admins import AdminRepository
 from app.repositories.broadcasts import BroadcastRepository
 from app.repositories.events import EventRepository
+from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsService
 from app.services.broadcasts import BroadcastSender, BroadcastService
 from app.services.export import ExportService
@@ -66,6 +70,36 @@ def can_edit_broadcast(status: BroadcastStatus) -> bool:
     return status in {BroadcastStatus.DRAFT, BroadcastStatus.SCHEDULED, BroadcastStatus.FAILED}
 
 
+async def send_broadcast_preview(bot: Bot, chat_id: int, item) -> None:
+    photos = [file for file in item.files if file.file_type == FileType.PHOTO]
+    if len(photos) > 1:
+        from aiogram.types import InputMediaPhoto
+
+        media = [
+            InputMediaPhoto(
+                media=photo.file_id,
+                caption=item.text[:1024] if index == 0 else None,
+                parse_mode=item.parse_mode if index == 0 else None,
+            )
+            for index, photo in enumerate(photos[:10])
+        ]
+        await bot.send_media_group(chat_id, media=media)
+        if len(item.text) > 1024:
+            await bot.send_message(chat_id, item.text, parse_mode=item.parse_mode)
+        return
+    if photos:
+        await bot.send_photo(
+            chat_id,
+            photos[0].file_id,
+            caption=item.text[:1024],
+            parse_mode=item.parse_mode,
+        )
+        if len(item.text) > 1024:
+            await bot.send_message(chat_id, item.text, parse_mode=item.parse_mode)
+        return
+    await bot.send_message(chat_id, item.text, parse_mode=item.parse_mode)
+
+
 @router.callback_query(F.data == "adm:broadcasts")
 @router.callback_query(F.data.startswith("abcl:"))
 async def list_broadcasts(
@@ -84,12 +118,160 @@ async def list_broadcasts(
 
 
 @router.callback_query(F.data == "abc:new")
-async def new_broadcast(callback: CallbackQuery, state: FSMContext, admin_model: Admin) -> None:
+async def new_broadcast(
+    callback: CallbackQuery,
+    state: FSMContext,
+    admin_model: Admin,
+) -> None:
     await require_broadcasts(admin_model)
     await state.clear()
-    await state.set_state(AdminBroadcastStates.title)
+    await state.update_data(
+        audience={"subscribed_only": True},
+        broadcast_age_mode="all",
+        broadcast_photos=[],
+        new_broadcast_wizard=True,
+    )
+    await state.set_state(AdminBroadcastStates.audience)
     await callback.message.answer(
-        "Введите внутреннее название рассылки.", reply_markup=cancel_keyboard()
+        "<b>Новая рассылка: выбор аудитории</b>\n\n"
+        "Можно выбрать возраст и несколько стран одновременно.",
+        reply_markup=broadcast_segment_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(AdminBroadcastStates.audience, F.data.startswith("bcrm:age:"))
+async def broadcast_age_filter(callback: CallbackQuery, state: FSMContext) -> None:
+    mode = callback.data.rsplit(":", 1)[1]
+    if mode not in {"all", "under18", "adult"}:
+        await callback.answer("Неизвестный фильтр", show_alert=True)
+        return
+    data = await state.get_data()
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    audience.pop("age_min", None)
+    audience.pop("age_max", None)
+    if mode == "under18":
+        audience["age_max"] = 17
+    elif mode == "adult":
+        audience["age_min"] = 18
+    await state.update_data(audience=audience, broadcast_age_mode=mode)
+    await callback.message.answer(
+        "Фильтр возраста обновлён.",
+        reply_markup=broadcast_segment_keyboard(
+            age_mode=mode,
+            selected_countries=len(audience.get("countries") or []),
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(AdminBroadcastStates.audience, F.data == "bcrm:countries")
+async def broadcast_countries(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    countries = await UserRepository(session).list_countries()
+    if not countries:
+        await callback.answer("В базе пока нет стран", show_alert=True)
+        return
+    data = await state.get_data()
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    selected = set(audience.get("countries") or [])
+    await state.update_data(broadcast_country_options=countries)
+    await callback.message.answer(
+        "Выберите страны для рассылки:",
+        reply_markup=country_multiselect_keyboard(
+            countries,
+            selected,
+            prefix="bcrmct",
+            done_callback="bcrm:countries_done",
+            clear_callback="bcrm:countries_clear",
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(AdminBroadcastStates.audience, F.data.startswith("bcrmct:"))
+async def broadcast_country_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    countries = list(data.get("broadcast_country_options") or [])
+    try:
+        country = countries[int(callback.data.split(":", 1)[1])]
+    except (ValueError, IndexError):
+        await callback.answer("Страна не найдена", show_alert=True)
+        return
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    selected = set(audience.get("countries") or [])
+    if country in selected:
+        selected.remove(country)
+    else:
+        selected.add(country)
+    if selected:
+        audience["countries"] = sorted(selected)
+    else:
+        audience.pop("countries", None)
+    await state.update_data(audience=audience)
+    await callback.message.edit_reply_markup(
+        reply_markup=country_multiselect_keyboard(
+            countries,
+            selected,
+            prefix="bcrmct",
+            done_callback="bcrm:countries_done",
+            clear_callback="bcrm:countries_clear",
+        )
+    )
+    await callback.answer("Выбор обновлён")
+
+
+@router.callback_query(AdminBroadcastStates.audience, F.data == "bcrm:countries_clear")
+async def broadcast_countries_clear(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    audience.pop("countries", None)
+    countries = list(data.get("broadcast_country_options") or [])
+    await state.update_data(audience=audience)
+    await callback.message.edit_reply_markup(
+        reply_markup=country_multiselect_keyboard(
+            countries,
+            set(),
+            prefix="bcrmct",
+            done_callback="bcrm:countries_done",
+            clear_callback="bcrm:countries_clear",
+        )
+    )
+    await callback.answer("Выбор очищен")
+
+
+@router.callback_query(AdminBroadcastStates.audience, F.data == "bcrm:countries_done")
+async def broadcast_countries_done(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    await callback.message.answer(
+        "Фильтр стран сохранён.",
+        reply_markup=broadcast_segment_keyboard(
+            age_mode=str(data.get("broadcast_age_mode") or "all"),
+            selected_countries=len(audience.get("countries") or []),
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(AdminBroadcastStates.audience, F.data == "bcrm:done")
+async def broadcast_segment_done(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    settings: Settings,
+) -> None:
+    data = await state.get_data()
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    count = await BroadcastService(session, settings).count_audience(audience, utcnow())
+    await state.update_data(audience=audience, estimated_count=count)
+    await state.set_state(AdminBroadcastStates.text)
+    await callback.message.answer(
+        f"Получателей по выбранному сегменту: {count}.\n\nВведите текст рассылки.",
+        reply_markup=cancel_keyboard(),
     )
     await callback.answer()
 
@@ -114,12 +296,122 @@ async def broadcast_body(message: Message, state: FSMContext) -> None:
     if not text or len(text) > 4096:
         await message.answer("Текст обязателен и не должен превышать 4096 символов.")
         return
+    data = await state.get_data()
+    if data.get("new_broadcast_wizard"):
+        await state.update_data(text=text, broadcast_photos=[])
+        await state.set_state(AdminBroadcastStates.photos)
+        await message.answer(
+            "Прикрепите одну или несколько фотографий. "
+            "Когда закончите, нажмите «Просмотреть». Фото можно не добавлять.",
+            reply_markup=photo_collection_keyboard(
+                done_callback="bcwiz:preview",
+                count=0,
+            ),
+        )
+        return
     await state.update_data(text=text, audience={"subscribed_only": True})
     await state.set_state(AdminBroadcastStates.audience)
     await message.answer(
         "Настройте аудиторию. Фильтры страны, возраста и активности можно комбинировать.",
         reply_markup=audience_keyboard(),
     )
+
+
+@router.message(AdminBroadcastStates.photos, F.photo)
+async def broadcast_wizard_photo(
+    message: Message,
+    state: FSMContext,
+    settings: Settings,
+) -> None:
+    data = await state.get_data()
+    photos = list(data.get("broadcast_photos") or [])
+    if len(photos) >= 10:
+        await message.answer("Для одной альбомной рассылки можно добавить не более 10 фото.")
+        return
+    photo = message.photo[-1]
+    if photo.file_size and photo.file_size > settings.max_upload_bytes:
+        await message.answer("Фотография превышает допустимый размер.")
+        return
+    photos.append(
+        {
+            "file_id": photo.file_id,
+            "file_unique_id": photo.file_unique_id,
+            "size": photo.file_size,
+            "caption": message.caption,
+        }
+    )
+    await state.update_data(broadcast_photos=photos)
+    await message.answer(
+        f"Фото добавлено. Всего: {len(photos)}.",
+        reply_markup=photo_collection_keyboard(
+            done_callback="bcwiz:preview",
+            count=len(photos),
+        ),
+    )
+
+
+@router.callback_query(AdminBroadcastStates.photos, F.data == "bcwiz:preview")
+async def broadcast_wizard_preview(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    settings: Settings,
+    admin_model: Admin,
+    bot: Bot,
+) -> None:
+    data = await state.get_data()
+    audience = dict(data.get("audience") or {"subscribed_only": True})
+    text = str(data.get("text") or "").strip()
+    if not text:
+        await callback.answer("Текст рассылки не найден", show_alert=True)
+        return
+    title = f"Рассылка {utcnow().strftime('%d.%m.%Y %H:%M')}"
+    item = await BroadcastService(session, settings).create(
+        title=title,
+        text=text,
+        audience_filter=audience,
+        author_admin_id=admin_model.id,
+    )
+    photos = list(data.get("broadcast_photos") or [])
+    for position, photo in enumerate(photos):
+        session.add(
+            BroadcastFile(
+                broadcast_id=item.id,
+                file_id=str(photo["file_id"]),
+                file_unique_id=str(photo["file_unique_id"]),
+                file_type=FileType.PHOTO,
+                file_name=None,
+                mime_type="image/jpeg",
+                size=photo.get("size"),
+                caption=photo.get("caption"),
+                position=position,
+            )
+        )
+    item.total_recipients = await BroadcastService(session, settings).count_audience(
+        audience,
+        utcnow(),
+    )
+    await session.flush()
+    item = await BroadcastRepository(session).get(item.id, with_relations=True)
+    if item is None:
+        await state.clear()
+        await callback.answer("Не удалось создать рассылку", show_alert=True)
+        return
+    await AdminRepository(session).log_action(
+        admin_id=admin_model.id,
+        action="broadcast_created",
+        entity_type="broadcast",
+        entity_id=item.id,
+        now=utcnow(),
+        metadata={"audience_count": item.total_recipients, "photos": len(photos)},
+    )
+    await state.clear()
+    await send_broadcast_preview(bot, callback.from_user.id, item)
+    await callback.message.answer(
+        f"<b>Черновик рассылки</b>\nПолучателей: {item.total_recipients}",
+        reply_markup=broadcast_actions(item),
+    )
+    await callback.answer()
 
 
 @router.callback_query(AdminBroadcastStates.audience, F.data.startswith("aud:"))
@@ -408,35 +700,7 @@ async def preview_broadcast(callback: CallbackQuery, session: AsyncSession, bot:
     if item is None:
         await callback.answer("Не найдено", show_alert=True)
         return
-    keyboard = (
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=button.text, url=button.url)]
-                for button in item.buttons
-                if button.url
-            ]
-        )
-        if any(button.url for button in item.buttons)
-        else None
-    )
-    if item.files:
-        first = item.files[0]
-        if first.file_type == FileType.PHOTO:
-            await bot.send_photo(
-                callback.from_user.id,
-                first.file_id,
-                caption=item.text[:1024],
-                reply_markup=keyboard,
-            )
-        else:
-            await bot.send_document(
-                callback.from_user.id,
-                first.file_id,
-                caption=item.text[:1024],
-                reply_markup=keyboard,
-            )
-    else:
-        await bot.send_message(callback.from_user.id, item.text, reply_markup=keyboard)
+    await send_broadcast_preview(bot, callback.from_user.id, item)
     await callback.answer()
 
 

@@ -72,23 +72,14 @@ def events_list_keyboard(
     events: list[Event], page: int, has_next: bool, filter_key: str
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="Все актуальные", callback_data="evflt:all"),
-        InlineKeyboardButton(text="Регистрация открыта", callback_data="evflt:open"),
-    )
-    builder.row(InlineKeyboardButton(text="На ближайшие 7 дней", callback_data="evflt:week"))
     for event in events:
         builder.button(text=event.title[:48], callback_data=f"ev:{event.id}")
     builder.adjust(1)
     navigation: list[InlineKeyboardButton] = []
     if page > 0:
-        navigation.append(
-            InlineKeyboardButton(text="Назад", callback_data=f"evl:{filter_key}:{page - 1}")
-        )
+        navigation.append(InlineKeyboardButton(text="Назад", callback_data=f"evl:all:{page - 1}"))
     if has_next:
-        navigation.append(
-            InlineKeyboardButton(text="Далее", callback_data=f"evl:{filter_key}:{page + 1}")
-        )
+        navigation.append(InlineKeyboardButton(text="Далее", callback_data=f"evl:all:{page + 1}"))
     if navigation:
         builder.row(*navigation)
     builder.row(InlineKeyboardButton(text="Главное меню", callback_data="user:menu"))
@@ -110,9 +101,7 @@ def event_card_keyboard(
     for label, url in tracked_links:
         builder.button(text=label[:64], url=url)
     for file in event.files[:5]:
-        label = file.file_name or (
-            "Изображение" if file.file_type.value == "photo" else "Документ"
-        )
+        label = file.file_name or ("Изображение" if file.file_type.value == "photo" else "Документ")
         builder.button(text=f"Файл: {label[:36]}", callback_data=f"evf:{file.id}")
     builder.button(text="К списку", callback_data="evl:all:0")
     builder.adjust(1)

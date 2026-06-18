@@ -94,8 +94,6 @@ async def support_list_callback(
     await callback.answer()
 
 
-
-
 @router.message(F.text == "📞 Связаться с нами")
 async def contact_from_reply_menu(
     message: Message,
@@ -178,9 +176,9 @@ async def ticket_message(
         attachment = build_attachment(message, first_message.id)
         if attachment is not None:
             session.add(attachment)
-    await service.notify_admins(message.bot, ticket)
+    await service.notify_admins(message.bot, ticket, user_model, message)
     await state.clear()
-    await message.answer(f"Обращение №{ticket.number} создано.")
+    await message.answer("Сообщение отправлено всем администраторам. Ответ придёт в этот чат.")
 
 
 @router.callback_query(F.data.startswith("tkt:"))
